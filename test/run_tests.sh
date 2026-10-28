@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Сквозной тест трёх скриптов на docker-стенде (см. CLAUDE.md, «Тестовый стенд»).
-# Поднимает контейнер-«сервер», прогоняет prepare_server.sh, install_k3s.sh и
-# setup_sa_access.sh, проверяет результат и убирает за собой. KEEP=1 оставляет
+# Сквозной тест k3sctl на docker-стенде (см. CLAUDE.md, «Тестовый стенд»).
+# Собирает бинарник, поднимает контейнер-«сервер», прогоняет k3sctl prepare,
+# install и access, проверяет результат и убирает за собой. KEEP=1 оставляет
 # контейнер и временный каталог после прогона.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -42,7 +42,12 @@ kc() { kubectl --kubeconfig "$TMP/kubeconfig" "$@"; }
 
 command -v docker >/dev/null || fail "нужен docker"
 command -v kubectl >/dev/null || fail "нужен kubectl"
+command -v go >/dev/null || fail "нужен go"
 docker info >/dev/null 2>&1 || fail "docker не запущен"
+
+echo "--- сборка k3sctl ---"
+(cd "$ROOT" && CGO_ENABLED=0 go build -o "$TMP/k3sctl" ./cmd/k3sctl)
+K3SCTL=$TMP/k3sctl
 
 echo "--- сборка образа $IMAGE (k3s $K3S_VERSION) ---"
 docker build -q --build-arg "K3S_VERSION=$K3S_VERSION" -t "$IMAGE" "$HERE" >/dev/null
@@ -81,8 +86,8 @@ for _ in $(seq 1 30); do
 done
 tssh root@127.0.0.1 true || fail "sshd в контейнере не поднялся"
 
-echo "--- prepare_server.sh ---"
-"$ROOT/prepare_server.sh" --env-file "$TMP/test.env"
+echo "--- k3sctl prepare ---"
+"$K3SCTL" prepare --env-file "$TMP/test.env"
 check "пользователь user входит по ключу и имеет sudo без пароля" \
   test "$(tssh user@127.0.0.1 'sudo -n id -u')" = 0
 check "bash-completion установлен" tssh user@127.0.0.1 'test -f /usr/share/bash-completion/bash_completion'
@@ -94,14 +99,14 @@ case "$out" in
   *"Permission denied (publickey)"*) pass "вход по паролю отключён (sshd предлагает только publickey)" ;;
   *) fail "вход по паролю не отключён, sshd ответил: $out" ;;
 esac
-check "повторный prepare_server.sh проходит" "$ROOT/prepare_server.sh" --env-file "$TMP/test.env"
-cloud_init=$("$ROOT/prepare_server.sh" --env-file "$TMP/test.env" --print-cloud-init)
+check "повторный k3sctl prepare проходит" "$K3SCTL" prepare --env-file "$TMP/test.env"
+cloud_init=$("$K3SCTL" prepare --env-file "$TMP/test.env" --print-cloud-init)
 check "--print-cloud-init печатает user-data с пользователем" grep -q '^  - name: user$' <<<"$cloud_init"
 check "--print-cloud-init подставил ключ" grep -q 'ssh-ed25519 .* k3s-sa-test$' <<<"$cloud_init"
 check "--print-cloud-init подставил часовой пояс" grep -q '^timezone: Asia/Almaty$' <<<"$cloud_init"
 
-echo "--- install_k3s.sh ---"
-"$ROOT/install_k3s.sh" --env-file "$TMP/test.env"
+echo "--- k3sctl install ---"
+"$K3SCTL" install --env-file "$TMP/test.env"
 check "config.yaml с tls-san записан" tssh root@127.0.0.1 'grep -q "^  - localhost" /etc/rancher/k3s/config.yaml'
 check "установщик создал службу k3s" tssh root@127.0.0.1 'test -f /etc/init.d/k3s'
 check "kubectl установлен" tssh root@127.0.0.1 'test -L /usr/local/bin/kubectl'
@@ -115,18 +120,18 @@ for _ in $(seq 1 90); do
 done
 check "k3s отвечает, sudo -n kubectl работает для user" tssh user@127.0.0.1 'sudo -n kubectl get --raw /readyz'
 
-echo "--- setup_sa_access.sh ---"
-"$ROOT/setup_sa_access.sh" --env-file "$TMP/test.env"
+echo "--- k3sctl access ---"
+"$K3SCTL" access --env-file "$TMP/test.env"
 check "в кластер входим учёткой tester-admin" \
   test "$(kc --context k3s-sa-test auth whoami -o jsonpath='{.status.userInfo.username}')" = system:serviceaccount:kube-system:tester-admin
 check "cluster-admin: список namespace читается" kc --context k3s-sa-test get ns
 check "kubeconfig создан с правами 600" test "$(stat -f %Lp "$TMP/kubeconfig" 2>/dev/null || stat -c %a "$TMP/kubeconfig")" = 600
-check "повторный setup_sa_access.sh проходит" "$ROOT/setup_sa_access.sh" --env-file "$TMP/test.env"
+check "повторный k3sctl access проходит" "$K3SCTL" access --env-file "$TMP/test.env"
 check "после повторного запуска доступ остался" kc --context k3s-sa-test get ns
 
 sed -e 's/^CONTEXT_NAME=.*/CONTEXT_NAME=k3s-sa-test-ttl/' -e 's/^SA_NAME=.*/SA_NAME=tester-ttl/' "$TMP/test.env" > "$TMP/ttl.env"
 echo 'SA_TOKEN_TTL=1h' >> "$TMP/ttl.env"
-check "setup_sa_access.sh с SA_TOKEN_TTL проходит" "$ROOT/setup_sa_access.sh" --env-file "$TMP/ttl.env"
+check "k3sctl access с SA_TOKEN_TTL проходит" "$K3SCTL" access --env-file "$TMP/ttl.env"
 check "токен со сроком работает" kc --context k3s-sa-test-ttl get ns
 check "первый контекст не пострадал" kc --context k3s-sa-test get ns
 check "текущий контекст не переключён (SET_CURRENT_CONTEXT=false)" \

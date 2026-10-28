@@ -1,32 +1,49 @@
-# k3s_config_merge
+# k3sctl (k3s_config_merge)
 
-Скрипты для нового сервера с k3s, настройки в `.env` рядом (в git не входит,
-образец `.env.example`). `.env` и `~/.kube/config` содержат учётные данные,
-не читать.
+Go-программа для нового сервера с k3s: `k3sctl prepare | install | access`.
+Настройки в `.env` в текущем каталоге (в git не входит, образец
+`.env.example`). `.env` и `~/.kube/config` содержат учётные данные, не читать.
 
-- `prepare_server.sh` — подготовка свежего сервера по SSH под `BOOTSTRAP_USER`
-  (root): пользователь, ключ, запрет паролей, пакеты, sysctl, часовой пояс;
-  `--print-cloud-init` рендерит `cloud-init.yaml.tpl`.
-- `install_k3s.sh` — k3s официальным установщиком, роль `server`/`agent`.
-- `setup_sa_access.sh` — доступ через ServiceAccount, админский `k3s.yaml`
-  на локальную машину не попадает.
+- `prepare` — подготовка свежего сервера по SSH под `BOOTSTRAP_USER` (root):
+  пользователь, ключ, запрет паролей, пакеты, sysctl, часовой пояс;
+  `--print-cloud-init` печатает user-data по шаблону.
+- `install` — k3s официальным установщиком, роль `server`/`agent`.
+- `access` — доступ через ServiceAccount, админский `k3s.yaml` на локальную
+  машину не попадает.
 
-Устройство: локальная часть на bash 3.2 (штатный на macOS), общие функции в
-`lib/common.sh`; серверная часть в `lib/remote_*.sh` на POSIX `sh`
-(Ubuntu/Debian и Alpine), передаётся по SSH через stdin вместе с
-переменными (`remote_vars` + `remote_sh`). Серверный скрипт сначала целиком
-сохраняется во временный файл и только потом запускается, поэтому heredoc и
-чтение stdin внутри него безопасны.
+## Устройство
+
+- `cmd/k3sctl/main.go` → `internal/app.Run` (разбор команд, `flag`).
+- `internal/command` — команды; каждая собирает серверный скрипт через
+  `remote.Script(имя, переменные)` и запускает его `sshx.Target.RunScript`.
+- `internal/remote/scripts/*.sh` — серверные части на POSIX `sh`
+  (Ubuntu/Debian и Alpine), встроены через `embed`. Скрипт на сервере
+  сначала целиком сохраняется во временный файл и только потом запускается,
+  поэтому heredoc и чтение stdin внутри него безопасны. Переменные
+  передаются строками `ИМЯ='значение'` в начале (экранирование `remote.ShellQuote`).
+- `internal/remote/templates/cloud-init.yaml.tpl` — `text/template`.
+- `internal/sshx` — системный `ssh` через `os/exec` (работают `~/.ssh/config`,
+  агент, ProxyJump); stderr сервера идёт в stderr программы, stdout
+  возвращается вызывающему.
+- `internal/kubecfg` — `clientcmd` из client-go: Upsert кластера/пользователя/
+  контекста, Verify через SelfSubjectReview и ServerVersion.
+- `internal/config` — godotenv + caarlos0/env. Значения из файла кладутся
+  поверх переменных окружения процесса. Особенность godotenv: комментарий
+  после пустого значения (`X=   # текст`) читается как значение, поэтому в
+  `.env.example` такие комментарии стоят строкой выше.
+
+Проверки кода: `make check` (`gofmt -l`, `go vet`, `go test`). golangci-lint
+не запускать.
 
 ## Тестовый стенд
 
-`./test/run_tests.sh` — всё поднимает и убирает сам; `KEEP=1` оставляет
-контейнер и временный каталог после прогона.
+`make e2e` (`./test/run_tests.sh`) — собирает бинарник, всё поднимает и
+убирает сам; `KEEP=1` оставляет контейнер и временный каталог после прогона.
 
 | Что | Значение |
 |---|---|
-| образ и контейнер | `k3s-sa-test` (из `test/Dockerfile`: alpine 3.22 + sshd + openrc + бинарник k3s `v1.33.5+k3s1` с GitHub; sudo/bash ставит сам `prepare_server.sh`) |
-| SSH | `127.0.0.1:2222`, пользователь `root` по ключу; `user` заводит `prepare_server.sh` |
+| образ и контейнер | `k3s-sa-test` (из `test/Dockerfile`: alpine 3.22 + sshd + openrc + бинарник k3s `v1.33.5+k3s1` с GitHub; sudo/bash ставит сам `k3sctl prepare`) |
+| SSH | `127.0.0.1:2222`, пользователь `root` по ключу; `user` заводит `k3sctl prepare` |
 | API k3s | `https://127.0.0.1:16443`, только control plane (`--disable-agent`), поэтому `get nodes` пустой |
 | ключ SSH | генерируется на каждый прогон во временном каталоге, нигде не хранится |
 | kubeconfig и файл настроек | во временном каталоге (`LOCAL_KUBECONFIG`, `--env-file`); `~/.kube/config` и `.env` не используются |

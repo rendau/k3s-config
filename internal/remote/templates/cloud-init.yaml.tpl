@@ -1,16 +1,18 @@
 #cloud-config
-# Шаблон user-data для нового сервера (Ubuntu/Debian). Готовый файл печатает
-#   ./prepare_server.sh --print-cloud-init > user-data.yaml
-# Его содержимое вставляется в поле user-data при создании виртуалки.
-timezone: __TIMEZONE__
+# user-data для нового сервера (Ubuntu/Debian). Напечатано командой
+#   k3sctl prepare --print-cloud-init
+# Содержимое вставляется в поле user-data при создании виртуалки.
+{{- if .Timezone }}
+timezone: {{ .Timezone }}
+{{- end }}
 users:
-  - name: __SSH_USER__
+  - name: {{ .SSHUser }}
     groups: [sudo]
     shell: /bin/bash
     sudo: "ALL=(ALL) NOPASSWD:ALL"
     lock_passwd: true
     ssh_authorized_keys:
-      - __SSH_PUBKEY__
+      - {{ .SSHPubkey }}
 ssh_pwauth: false
 disable_root: true
 package_update: true

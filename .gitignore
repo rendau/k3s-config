@@ -28,3 +28,6 @@ secrets.yaml
 
 merged_config.yaml
 temp_config.yaml
+
+# сборка k3sctl
+build/
