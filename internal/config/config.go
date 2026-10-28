@@ -1,16 +1,30 @@
-// Package config читает настройки из файла формата .env (образец .env.example).
+// Package config читает настройки сервера из файла формата .env.
+// Файлы живут в ~/.config/k3sctl/<имя>.env, образец — example.env (встроен).
 // Значения из файла имеют приоритет над переменными окружения процесса.
 package config
 
 import (
+	_ "embed"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/caarlos0/env/v9"
 	"github.com/joho/godotenv"
+
+	"github.com/rendau/k3s_config_merge/internal/util"
+)
+
+//go:embed example.env
+var example []byte
+
+const (
+	dirName = "k3sctl"
+	ext     = ".env"
 )
 
 type Config struct {
@@ -51,13 +65,45 @@ type Config struct {
 	SetCurrentContext bool   `env:"SET_CURRENT_CONTEXT" envDefault:"false"`
 }
 
-// Load читает файл настроек. Переменные окружения процесса — основа,
-// значения из файла кладутся поверх них.
-func Load(path string) (*Config, error) {
+// Dir — каталог с файлами серверов: $XDG_CONFIG_HOME/k3sctl, обычно ~/.config/k3sctl
+// (и на macOS тоже, а не Library/Application Support).
+func Dir() string {
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		base = util.ExpandHome("~/.config")
+	}
+
+	return filepath.Join(base, dirName)
+}
+
+// Resolve превращает аргумент команды в путь к файлу настроек:
+//   - пусто — .env в текущем каталоге;
+//   - путь (есть / или \, оканчивается на .env, либо такой файл существует) — он сам;
+//   - иначе имя сервера — ~/.config/k3sctl/<имя>.env.
+func Resolve(arg string) string {
+	switch {
+	case arg == "":
+		return ".env"
+	case strings.ContainsAny(arg, `/\`), strings.HasSuffix(arg, ext), fileExists(arg):
+		return util.ExpandHome(arg)
+	default:
+		return filepath.Join(Dir(), arg+ext)
+	}
+}
+
+// Load читает файл настроек сервера по аргументу команды (см. Resolve).
+// Переменные окружения процесса — основа, значения из файла кладутся поверх них.
+func Load(arg string) (*Config, error) {
+	path := Resolve(arg)
+
 	fileVars, err := godotenv.Read(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("файл настроек не найден: %s (образец: .env.example)", path)
+			if path == filepath.Join(Dir(), arg+ext) {
+				return nil, fmt.Errorf("сервер %q не заведён: нет файла %s (создать: k3sctl init %s)", arg, path, arg)
+			}
+
+			return nil, fmt.Errorf("файл настроек не найден: %s", path)
 		}
 
 		return nil, fmt.Errorf("чтение %s: %w", path, err)
@@ -81,7 +127,57 @@ func Load(path string) (*Config, error) {
 	return conf, nil
 }
 
+// Init создаёт файл настроек нового сервера из образца и возвращает его путь.
+// Существующий файл не перезаписывает.
+func Init(name string) (string, error) {
+	if name == "" || strings.ContainsAny(name, `/\`) || strings.HasSuffix(name, ext) {
+		return "", fmt.Errorf("имя сервера должно быть простым словом, напр. zeon, а не %q", name)
+	}
+
+	path := filepath.Join(Dir(), name+ext)
+	if fileExists(path) {
+		return "", fmt.Errorf("сервер %q уже заведён: %s", name, path)
+	}
+
+	if err := os.MkdirAll(Dir(), 0o700); err != nil {
+		return "", fmt.Errorf("каталог %s: %w", Dir(), err)
+	}
+	if err := os.WriteFile(path, example, 0o600); err != nil {
+		return "", fmt.Errorf("запись %s: %w", path, err)
+	}
+
+	return path, nil
+}
+
+// List возвращает имена заведённых серверов (файлы *.env в Dir).
+func List() ([]string, error) {
+	entries, err := os.ReadDir(Dir())
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf("каталог %s: %w", Dir(), err)
+	}
+
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ext) {
+			names = append(names, strings.TrimSuffix(e.Name(), ext))
+		}
+	}
+	sort.Strings(names)
+
+	return names, nil
+}
+
 // Missing — ошибка «в файле настроек не задано ИМЯ».
 func Missing(name string) error {
 	return fmt.Errorf("в файле настроек не задано %s", name)
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+
+	return err == nil && !info.IsDir()
 }

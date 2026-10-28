@@ -49,6 +49,11 @@ echo "--- сборка k3sctl ---"
 (cd "$ROOT" && CGO_ENABLED=0 go build -o "$TMP/k3sctl" ./cmd/k3sctl)
 K3SCTL=$TMP/k3sctl
 
+echo "--- k3sctl init / list ---"
+check "init создаёт файл сервера" env HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home/.config" "$K3SCTL" init demo
+check "файл сервера лежит в ~/.config/k3sctl" test -f "$TMP/home/.config/k3sctl/demo.env"
+check "list показывает сервер" test "$(HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home/.config" "$K3SCTL" list)" = demo
+
 echo "--- сборка образа $IMAGE (k3s $K3S_VERSION) ---"
 docker build -q --build-arg "K3S_VERSION=$K3S_VERSION" -t "$IMAGE" "$HERE" >/dev/null
 
@@ -87,7 +92,7 @@ done
 tssh root@127.0.0.1 true || fail "sshd в контейнере не поднялся"
 
 echo "--- k3sctl prepare ---"
-"$K3SCTL" prepare --env-file "$TMP/test.env"
+"$K3SCTL" prepare "$TMP/test.env"
 check "пользователь user входит по ключу и имеет sudo без пароля" \
   test "$(tssh user@127.0.0.1 'sudo -n id -u')" = 0
 check "bash-completion установлен" tssh user@127.0.0.1 'test -f /usr/share/bash-completion/bash_completion'
@@ -99,14 +104,14 @@ case "$out" in
   *"Permission denied (publickey)"*) pass "вход по паролю отключён (sshd предлагает только publickey)" ;;
   *) fail "вход по паролю не отключён, sshd ответил: $out" ;;
 esac
-check "повторный k3sctl prepare проходит" "$K3SCTL" prepare --env-file "$TMP/test.env"
-cloud_init=$("$K3SCTL" prepare --env-file "$TMP/test.env" --print-cloud-init)
-check "--print-cloud-init печатает user-data с пользователем" grep -q '^  - name: user$' <<<"$cloud_init"
-check "--print-cloud-init подставил ключ" grep -q 'ssh-ed25519 .* k3s-sa-test$' <<<"$cloud_init"
-check "--print-cloud-init подставил часовой пояс" grep -q '^timezone: Asia/Almaty$' <<<"$cloud_init"
+check "повторный k3sctl prepare проходит" "$K3SCTL" prepare "$TMP/test.env"
+cloud_init=$("$K3SCTL" cloud-init "$TMP/test.env")
+check "cloud-init печатает user-data с пользователем" grep -q '^  - name: user$' <<<"$cloud_init"
+check "cloud-init подставил ключ" grep -q 'ssh-ed25519 .* k3s-sa-test$' <<<"$cloud_init"
+check "cloud-init подставил часовой пояс" grep -q '^timezone: Asia/Almaty$' <<<"$cloud_init"
 
 echo "--- k3sctl install ---"
-"$K3SCTL" install --env-file "$TMP/test.env"
+"$K3SCTL" install "$TMP/test.env"
 check "config.yaml с tls-san записан" tssh root@127.0.0.1 'grep -q "^  - localhost" /etc/rancher/k3s/config.yaml'
 check "установщик создал службу k3s" tssh root@127.0.0.1 'test -f /etc/init.d/k3s'
 check "kubectl установлен" tssh root@127.0.0.1 'test -L /usr/local/bin/kubectl'
@@ -121,17 +126,17 @@ done
 check "k3s отвечает, sudo -n kubectl работает для user" tssh user@127.0.0.1 'sudo -n kubectl get --raw /readyz'
 
 echo "--- k3sctl access ---"
-"$K3SCTL" access --env-file "$TMP/test.env"
+"$K3SCTL" access "$TMP/test.env"
 check "в кластер входим учёткой tester-admin" \
   test "$(kc --context k3s-sa-test auth whoami -o jsonpath='{.status.userInfo.username}')" = system:serviceaccount:kube-system:tester-admin
 check "cluster-admin: список namespace читается" kc --context k3s-sa-test get ns
 check "kubeconfig создан с правами 600" test "$(stat -f %Lp "$TMP/kubeconfig" 2>/dev/null || stat -c %a "$TMP/kubeconfig")" = 600
-check "повторный k3sctl access проходит" "$K3SCTL" access --env-file "$TMP/test.env"
+check "повторный k3sctl access проходит" "$K3SCTL" access "$TMP/test.env"
 check "после повторного запуска доступ остался" kc --context k3s-sa-test get ns
 
 sed -e 's/^CONTEXT_NAME=.*/CONTEXT_NAME=k3s-sa-test-ttl/' -e 's/^SA_NAME=.*/SA_NAME=tester-ttl/' "$TMP/test.env" > "$TMP/ttl.env"
 echo 'SA_TOKEN_TTL=1h' >> "$TMP/ttl.env"
-check "k3sctl access с SA_TOKEN_TTL проходит" "$K3SCTL" access --env-file "$TMP/ttl.env"
+check "k3sctl access с SA_TOKEN_TTL проходит" "$K3SCTL" access "$TMP/ttl.env"
 check "токен со сроком работает" kc --context k3s-sa-test-ttl get ns
 check "первый контекст не пострадал" kc --context k3s-sa-test get ns
 check "текущий контекст не переключён (SET_CURRENT_CONTEXT=false)" \

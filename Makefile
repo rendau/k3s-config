@@ -12,6 +12,7 @@ LDFLAGS = -X $(MODULE)/internal/constant.Version=$(VERSION) \
 	-X $(MODULE)/internal/constant.BuiltAt=$(BUILT_AT)
 
 .SILENT:
+.PHONY: build install clean check e2e
 
 build:
 	mkdir -p $(BUILD_PATH)

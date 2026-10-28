@@ -11,16 +11,9 @@ import (
 	"github.com/rendau/k3s_config_merge/internal/ui"
 )
 
-// PrepareOpts — ключи команды prepare.
-type PrepareOpts struct {
-	// PrintCloudInit — не подключаться к серверу, а напечатать user-data для cloud-init в Out.
-	PrintCloudInit bool
-	Out            io.Writer
-}
-
-// Prepare готовит свежий сервер: пользователь с sudo и ключом, запрет
-// паролей, пакеты, sysctl, часовой пояс. Заходит под BOOTSTRAP_USER.
-func Prepare(ctx context.Context, c *config.Config, opts PrepareOpts) error {
+// CloudInit печатает в out user-data для cloud-init: та же подготовка
+// сервера, что делает Prepare, но силами провайдера при создании виртуалки.
+func CloudInit(c *config.Config, out io.Writer) error {
 	if c.SSHUser == "" {
 		return config.Missing("SSH_USER")
 	}
@@ -29,22 +22,31 @@ func Prepare(ctx context.Context, c *config.Config, opts PrepareOpts) error {
 		return err
 	}
 
-	if opts.PrintCloudInit {
-		text, err := remote.CloudInit(remote.CloudInitParams{
-			SSHUser:   c.SSHUser,
-			SSHPubkey: pubkey,
-			Timezone:  c.ServerTimezone,
-		})
-		if err != nil {
-			return err
-		}
-		_, err = io.WriteString(opts.Out, text)
-
+	text, err := remote.CloudInit(remote.CloudInitParams{
+		SSHUser:   c.SSHUser,
+		SSHPubkey: pubkey,
+		Timezone:  c.ServerTimezone,
+	})
+	if err != nil {
 		return err
 	}
+	_, err = io.WriteString(out, text)
 
+	return err
+}
+
+// Prepare готовит свежий сервер: пользователь с sudo и ключом, запрет
+// паролей, пакеты, sysctl, часовой пояс. Заходит под BOOTSTRAP_USER.
+func Prepare(ctx context.Context, c *config.Config) error {
 	if c.SSHHost == "" {
 		return config.Missing("SSH_HOST")
+	}
+	if c.SSHUser == "" {
+		return config.Missing("SSH_USER")
+	}
+	pubkey, err := loadPubkey(c)
+	if err != nil {
+		return err
 	}
 
 	script, err := remote.Script(remote.ScriptPrepareServer, map[string]string{

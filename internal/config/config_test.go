@@ -9,6 +9,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// useTempConfigDir подменяет каталог настроек на временный.
+func useTempConfigDir(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	return filepath.Join(home, ".config", dirName)
+}
+
 func TestLoad(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.env")
 	require.NoError(t, os.WriteFile(path, []byte(`
@@ -42,7 +52,7 @@ SA_NAME=mdb-admin
 // должны оставаться пустыми (комментарий после пустого значения godotenv
 // читает как значение).
 func TestLoad_Example(t *testing.T) {
-	conf, err := Load("../../.env.example")
+	conf, err := Load("example.env")
 	require.NoError(t, err)
 
 	assert.Equal(t, "1.2.3.4", conf.SSHHost)
@@ -80,8 +90,50 @@ func TestLoad_FileOverridesEnvironment(t *testing.T) {
 	assert.Equal(t, "env-user", conf.SSHUser, "чего нет в файле — берётся из окружения")
 }
 
-func TestLoad_NotFound(t *testing.T) {
-	_, err := Load(filepath.Join(t.TempDir(), "nope.env"))
+func TestResolve(t *testing.T) {
+	dir := useTempConfigDir(t)
+
+	assert.Equal(t, ".env", Resolve(""), "без аргумента — .env в текущем каталоге")
+	assert.Equal(t, filepath.Join(dir, "zeon.env"), Resolve("zeon"), "имя сервера")
+	assert.Equal(t, "/tmp/x/srv.env", Resolve("/tmp/x/srv.env"), "абсолютный путь")
+	assert.Equal(t, "srv.env", Resolve("srv.env"), "файл в текущем каталоге по расширению")
+	assert.Equal(t, filepath.Join(os.Getenv("HOME"), "a.env"), Resolve("~/a.env"), "~ раскрывается")
+}
+
+func TestInitListLoad(t *testing.T) {
+	dir := useTempConfigDir(t)
+
+	names, err := List()
+	require.NoError(t, err)
+	assert.Empty(t, names, "каталога ещё нет")
+
+	path, err := Init("zeon")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(dir, "zeon.env"), path)
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	_, err = Init("zeon")
+	require.Error(t, err, "повторный init не перезаписывает")
+	_, err = Init("bad/name")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "не найден")
+	_, err = Init("")
+	require.Error(t, err)
+
+	_, err = Init("mechta")
+	require.NoError(t, err)
+
+	names, err = List()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"mechta", "zeon"}, names)
+
+	conf, err := Load("zeon")
+	require.NoError(t, err)
+	assert.Equal(t, "1.2.3.4", conf.SSHHost, "из образца")
+
+	_, err = Load("nope")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "k3sctl init nope", "подсказка, как завести сервер")
 }

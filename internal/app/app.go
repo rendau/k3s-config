@@ -3,8 +3,6 @@ package app
 
 import (
 	"context"
-	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -18,29 +16,39 @@ import (
 
 const usageText = `k3sctl — новый сервер с k3s: подготовить, поставить k3s, получить доступ.
 
-Использование:
-  k3sctl prepare [--env-file FILE] [--print-cloud-init]
-  k3sctl install [--env-file FILE]
-  k3sctl access  [--env-file FILE]
+Порядок для нового сервера (здесь он назван zeon):
+
+  k3sctl init zeon          завести сервер: создаёт %s/zeon.env, его нужно заполнить
+  k3sctl cloud-init zeon    напечатать user-data для поля cloud-init при создании виртуалки
+  k3sctl prepare zeon       ...или подготовить уже созданный сервер по SSH (под root)
+  k3sctl install zeon       поставить k3s (K3S_ROLE в файле: server или agent)
+  k3sctl access zeon        завести учётку и записать контекст в ~/.kube/config
+
+Ещё:
+
+  k3sctl list               какие серверы заведены
   k3sctl version
 
-Команды:
-  prepare   подготовить свежий сервер: пользователь с sudo и ssh-ключом,
-            запрет входа по паролю, обновление пакетов, sysctl, часовой пояс;
-            --print-cloud-init печатает то же в виде user-data для cloud-init
-  install   поставить k3s официальным установщиком (K3S_ROLE: server или agent)
-  access    завести ServiceAccount и записать контекст в kubeconfig
-
-Настройки читаются из файла .env в текущем каталоге (образец .env.example),
-другой файл — ключом --env-file.
+Вместо имени сервера можно дать путь к файлу настроек; без аргумента
+берётся .env из текущего каталога.
 `
 
 // Run выполняет команду по аргументам (без имени программы) и возвращает код выхода.
 func Run(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprint(os.Stderr, usageText)
+	if len(args) == 0 || isHelp(args[0]) {
+		printUsage(os.Stdout)
+
+		return 0
+	}
+	name, rest := args[0], args[1:]
+	if len(rest) > 1 || (len(rest) == 1 && isHelp(rest[0])) {
+		printUsage(os.Stderr)
 
 		return 2
+	}
+	arg := ""
+	if len(rest) == 1 {
+		arg = rest[0]
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -48,31 +56,33 @@ func Run(args []string) int {
 
 	var err error
 
-	switch name := args[0]; name {
+	switch name {
+	case "init":
+		err = runInit(arg)
+	case "list":
+		err = runList()
+	case "cloud-init":
+		err = withConfig(arg, func(c *config.Config) error { return command.CloudInit(c, os.Stdout) })
 	case "prepare":
-		err = runPrepare(ctx, args[1:])
+		err = withConfig(arg, func(c *config.Config) error { return command.Prepare(ctx, c) })
 	case "install":
-		err = runWithConfig(ctx, name, args[1:], command.Install)
+		err = withConfig(arg, func(c *config.Config) error { return command.Install(ctx, c) })
 	case "access":
-		err = runWithConfig(ctx, name, args[1:], command.Access)
+		err = withConfig(arg, func(c *config.Config) error { return command.Access(ctx, c) })
 	case "version":
 		fmt.Printf("k3sctl %s", constant.Version)
 		if constant.Commit != "" {
 			fmt.Printf(" (%s, %s)", constant.Commit, constant.BuiltAt)
 		}
 		fmt.Println()
-	case "help", "-h", "--help":
-		fmt.Print(usageText)
 	default:
-		fmt.Fprintf(os.Stderr, "неизвестная команда: %s\n\n%s", name, usageText)
+		fmt.Fprintf(os.Stderr, "неизвестная команда: %s\n\n", name)
+		printUsage(os.Stderr)
 
 		return 2
 	}
 
 	if err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
 		ui.Error("%v", err)
 
 		return 1
@@ -81,61 +91,51 @@ func Run(args []string) int {
 	return 0
 }
 
-// newFlagSet — общие ключи всех команд: --env-file.
-func newFlagSet(name string, envFile *string) *flag.FlagSet {
-	fs := flag.NewFlagSet("k3sctl "+name, flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	fs.StringVar(envFile, "env-file", ".env", "файл настроек")
-
-	return fs
+func isHelp(s string) bool {
+	return s == "help" || s == "-h" || s == "--help"
 }
 
-func runPrepare(ctx context.Context, args []string) error {
-	var envFile string
-	var printCloudInit bool
+func printUsage(w *os.File) {
+	fmt.Fprintf(w, usageText, config.Dir())
+}
 
-	fs := newFlagSet("prepare", &envFile)
-	fs.BoolVar(&printCloudInit, "print-cloud-init", false, "напечатать user-data для cloud-init и выйти")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if err := noPositional(fs); err != nil {
-		return err
-	}
-
-	conf, err := config.Load(envFile)
+func withConfig(arg string, run func(*config.Config) error) error {
+	conf, err := config.Load(arg)
 	if err != nil {
 		return err
 	}
 
-	return command.Prepare(ctx, conf, command.PrepareOpts{
-		PrintCloudInit: printCloudInit,
-		Out:            os.Stdout,
-	})
+	return run(conf)
 }
 
-func runWithConfig(ctx context.Context, name string, args []string, run func(context.Context, *config.Config) error) error {
-	var envFile string
-
-	fs := newFlagSet(name, &envFile)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if err := noPositional(fs); err != nil {
-		return err
+func runInit(name string) error {
+	if name == "" {
+		return fmt.Errorf("укажите имя сервера: k3sctl init <имя>")
 	}
 
-	conf, err := config.Load(envFile)
+	path, err := config.Init(name)
 	if err != nil {
 		return err
 	}
 
-	return run(ctx, conf)
+	ui.Info("создан %s", path)
+	ui.Info("заполните его и дальше: k3sctl cloud-init %s (или prepare), install, access", name)
+
+	return nil
 }
 
-func noPositional(fs *flag.FlagSet) error {
-	if fs.NArg() > 0 {
-		return fmt.Errorf("лишний аргумент: %s", fs.Arg(0))
+func runList() error {
+	names, err := config.List()
+	if err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		ui.Info("серверов пока нет (каталог %s); завести: k3sctl init <имя>", config.Dir())
+
+		return nil
+	}
+	for _, n := range names {
+		fmt.Println(n)
 	}
 
 	return nil

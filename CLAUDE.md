@@ -1,19 +1,24 @@
 # k3sctl (k3s_config_merge)
 
-Go-программа для нового сервера с k3s: `k3sctl prepare | install | access`.
-Настройки в `.env` в текущем каталоге (в git не входит, образец
-`.env.example`). `.env` и `~/.kube/config` содержат учётные данные, не читать.
+Go-программа для нового сервера с k3s:
+`k3sctl init | cloud-init | prepare | install | access | list <сервер>`.
+Аргумент команды — имя сервера (файл `~/.config/k3sctl/<имя>.env`), путь к
+файлу или ничего (`.env` в текущем каталоге); разбор в `config.Resolve`.
+Образец файла — `internal/config/example.env` (встроен, его копирует `init`).
+Файлы серверов и `~/.kube/config` содержат учётные данные, не читать.
 
+- `init` — создать файл сервера из образца; `list` — заведённые серверы.
+- `cloud-init` — напечатать user-data по шаблону.
 - `prepare` — подготовка свежего сервера по SSH под `BOOTSTRAP_USER` (root):
-  пользователь, ключ, запрет паролей, пакеты, sysctl, часовой пояс;
-  `--print-cloud-init` печатает user-data по шаблону.
+  пользователь, ключ, запрет паролей, пакеты, sysctl, часовой пояс.
 - `install` — k3s официальным установщиком, роль `server`/`agent`.
 - `access` — доступ через ServiceAccount, админский `k3s.yaml` на локальную
   машину не попадает.
 
 ## Устройство
 
-- `cmd/k3sctl/main.go` → `internal/app.Run` (разбор команд, `flag`).
+- `cmd/k3sctl/main.go` → `internal/app.Run` (команда + один позиционный
+  аргумент, без флагов).
 - `internal/command` — команды; каждая собирает серверный скрипт через
   `remote.Script(имя, переменные)` и запускает его `sshx.Target.RunScript`.
 - `internal/remote/scripts/*.sh` — серверные части на POSIX `sh`
@@ -30,7 +35,9 @@ Go-программа для нового сервера с k3s: `k3sctl prepare
 - `internal/config` — godotenv + caarlos0/env. Значения из файла кладутся
   поверх переменных окружения процесса. Особенность godotenv: комментарий
   после пустого значения (`X=   # текст`) читается как значение, поэтому в
-  `.env.example` такие комментарии стоят строкой выше.
+  `example.env` такие комментарии стоят строкой выше. Каталог настроек —
+  `$XDG_CONFIG_HOME/k3sctl`, иначе `~/.config/k3sctl` (намеренно не
+  `os.UserConfigDir`, который на macOS даёт Library/Application Support).
 
 Проверки кода: `make check` (`gofmt -l`, `go vet`, `go test`). golangci-lint
 не запускать.
@@ -46,7 +53,7 @@ Go-программа для нового сервера с k3s: `k3sctl prepare
 | SSH | `127.0.0.1:2222`, пользователь `root` по ключу; `user` заводит `k3sctl prepare` |
 | API k3s | `https://127.0.0.1:16443`, только control plane (`--disable-agent`), поэтому `get nodes` пустой |
 | ключ SSH | генерируется на каждый прогон во временном каталоге, нигде не хранится |
-| kubeconfig и файл настроек | во временном каталоге (`LOCAL_KUBECONFIG`, `--env-file`); `~/.kube/config` и `.env` не используются |
+| kubeconfig и файл настроек | во временном каталоге (`LOCAL_KUBECONFIG`, командам передаётся путь к файлу); `~/.kube/config` и `~/.config/k3sctl` не используются, `init`/`list` проверяются с подменённым `HOME` |
 | контекст / ServiceAccount | `k3s-sa-test` / `kube-system/tester-admin`; второй контекст `k3s-sa-test-ttl` проверяет токен со сроком |
 
 Установщик k3s в контейнере запускается с `INSTALL_K3S_SKIP_DOWNLOAD=true
