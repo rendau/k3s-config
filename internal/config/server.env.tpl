@@ -26,12 +26,18 @@ PREPARE_UPGRADE={{.PrepareUpgrade}}
 PREPARE_DISABLE_PASSWORD={{.PrepareDisablePassword}}
 # часовой пояс сервера; пусто = не трогать
 SERVER_TIMEZONE={{.ServerTimezone}}
+# перезагрузка после обновлений, только если система её просит: расписание
+# cron по времени сервера (по умолчанию воскресенье 04:00); пусто = не заводить
+PREPARE_REBOOT_CRON={{.PrepareRebootCron}}
+# потолок системного журнала (journald), напр. 500M или 1G; пусто = не трогать
+JOURNAL_MAX_USE={{.JournalMaxUse}}
 
 # ---------- k3sctl install ----------
 # server (master) или agent (worker)
 K3S_ROLE={{.K3sRole}}
-# напр. v1.33.5+k3s1; пусто = последняя стабильная
-K3S_VERSION=
+# init записывает текущую стабильную с update.k3s.io; пусто = последняя
+# стабильная на момент install
+K3S_VERSION={{.K3sVersion}}
 # адреса в сертификате API через запятую, напр. k3s.example.com,1.2.3.4;
 # пусто = SSH_HOST
 K3S_TLS_SAN=
@@ -39,6 +45,15 @@ K3S_TLS_SAN=
 K3S_EXTRA_ARGS=
 # переменные установщика get.k3s.io, напр. INSTALL_K3S_CHANNEL=latest
 K3S_INSTALL_ENV=
+# запас процессора и памяти для самой ОС и k3s, подам не отдаётся,
+# напр. cpu=200m,memory=512Mi; пусто = по размеру машины (10% памяти,
+# не меньше 256Mi и не больше 2Gi; 100m на ядро, не больше 1000m)
+K3S_SYSTEM_RESERVED=
+# порог, при котором kubelet выселяет поды, чтобы не задушить систему
+K3S_EVICTION_HARD={{.K3sEvictionHard}}
+# логи контейнеров: размер одного файла и сколько файлов хранить на контейнер
+K3S_LOG_MAX_SIZE={{.K3sLogMaxSize}}
+K3S_LOG_MAX_FILES={{.K3sLogMaxFiles}}
 # Только для agent: откуда взять адрес master и токен кластера.
 # SSH-хост master, токен читается с него через sudo
 K3S_SERVER_SSH_HOST=

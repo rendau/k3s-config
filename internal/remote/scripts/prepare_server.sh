@@ -1,6 +1,7 @@
 # Серверная часть prepare_server.sh. Выполняется от root, POSIX sh.
 # Переменные ставит в начало локальный скрипт: SSH_USER, SSH_PUBKEY_CONTENT,
-# PREPARE_UPGRADE, PREPARE_DISABLE_PASSWORD, SERVER_TIMEZONE.
+# PREPARE_UPGRADE, PREPARE_DISABLE_PASSWORD, SERVER_TIMEZONE, PREPARE_REBOOT_CRON,
+# JOURNAL_MAX_USE.
 set -eu
 
 log()  { printf '  [сервер] %s\n' "$*" >&2; }
@@ -12,6 +13,8 @@ die()  { printf '  [сервер] ОШИБКА: %s\n' "$*" >&2; exit 1; }
 PREPARE_UPGRADE=${PREPARE_UPGRADE:-true}
 PREPARE_DISABLE_PASSWORD=${PREPARE_DISABLE_PASSWORD:-true}
 SERVER_TIMEZONE=${SERVER_TIMEZONE:-}
+PREPARE_REBOOT_CRON=${PREPARE_REBOOT_CRON:-}
+JOURNAL_MAX_USE=${JOURNAL_MAX_USE:-}
 
 # --- 1. пакеты ---
 if command -v apt-get >/dev/null 2>&1; then
@@ -22,7 +25,7 @@ if command -v apt-get >/dev/null 2>&1; then
     log "apt-get upgrade"
     apt-get -y -qq -o Dpkg::Options::=--force-confold upgrade
   fi
-  apt-get -y -qq install sudo curl ca-certificates bash-completion openssh-server
+  apt-get -y -qq install sudo curl ca-certificates bash-completion openssh-server cron
 elif command -v apk >/dev/null 2>&1; then
   log "apk update"
   apk -q update
@@ -141,7 +144,35 @@ PubkeyAuthentication yes"
   log "вход по паролю отключён"
 fi
 
-# --- 8. итог ---
+# --- 8. перезагрузка после обновлений по расписанию ---
+# Обновления ставит unattended-upgrades ежедневно, но сам не перезагружает;
+# это задание перезагружает по расписанию, только если система просит
+# (/var/run/reboot-required — признак Debian/Ubuntu, на Alpine его нет).
+cron_file=/etc/cron.d/k3sctl-reboot
+if [ -n "$PREPARE_REBOOT_CRON" ] && [ -d /etc/cron.d ]; then
+  printf 'SHELL=/bin/sh\n%s root [ -f /var/run/reboot-required ] && /sbin/shutdown -r now "k3sctl: перезагрузка после обновлений"\n' \
+    "$PREPARE_REBOOT_CRON" > "$cron_file"
+  chmod 644 "$cron_file"
+  log "перезагрузка после обновлений по расписанию «$PREPARE_REBOOT_CRON» (время сервера)"
+elif [ -n "$PREPARE_REBOOT_CRON" ]; then
+  warn "нет /etc/cron.d, перезагрузку по расписанию не завожу"
+else
+  rm -f "$cron_file"
+fi
+
+# --- 9. потолок системного журнала ---
+# journald по умолчанию растёт до 10% диска; на Alpine journald нет — пропуск.
+journal_conf=/etc/systemd/journald.conf.d/90-k3sctl.conf
+if [ -n "$JOURNAL_MAX_USE" ] && command -v journalctl >/dev/null 2>&1; then
+  mkdir -p /etc/systemd/journald.conf.d
+  printf '[Journal]\nSystemMaxUse=%s\n' "$JOURNAL_MAX_USE" > "$journal_conf"
+  systemctl restart systemd-journald 2>/dev/null || warn "не смог перезапустить journald, лимит применится после перезагрузки"
+  log "системный журнал ограничен $JOURNAL_MAX_USE"
+elif [ -n "$JOURNAL_MAX_USE" ]; then
+  warn "journald нет, потолок журнала не ставлю"
+fi
+
+# --- 10. итог ---
 if [ -f /var/run/reboot-required ]; then
   warn "после обновления пакетов нужна перезагрузка (/var/run/reboot-required)"
 fi

@@ -1,6 +1,7 @@
 # Серверная часть install_k3s.sh. Выполняется от root, POSIX sh.
 # Переменные ставит в начало локальный скрипт: K3S_ROLE, SSH_USER, K3S_VERSION,
-# K3S_TLS_SAN, K3S_EXTRA_ARGS, K3S_INSTALL_ENV, K3S_SERVER_URL, K3S_TOKEN.
+# K3S_TLS_SAN, K3S_EXTRA_ARGS, K3S_INSTALL_ENV, K3S_SERVER_URL, K3S_TOKEN,
+# K3S_SYSTEM_RESERVED, K3S_EVICTION_HARD, K3S_LOG_MAX_SIZE, K3S_LOG_MAX_FILES.
 set -eu
 
 log()  { printf '  [сервер] %s\n' "$*" >&2; }
@@ -15,31 +16,66 @@ K3S_EXTRA_ARGS=${K3S_EXTRA_ARGS:-}
 K3S_INSTALL_ENV=${K3S_INSTALL_ENV:-}
 K3S_SERVER_URL=${K3S_SERVER_URL:-}
 K3S_TOKEN=${K3S_TOKEN:-}
+K3S_SYSTEM_RESERVED=${K3S_SYSTEM_RESERVED:-}
+K3S_EVICTION_HARD=${K3S_EVICTION_HARD:-}
+K3S_LOG_MAX_SIZE=${K3S_LOG_MAX_SIZE:-}
+K3S_LOG_MAX_FILES=${K3S_LOG_MAX_FILES:-}
 command -v curl >/dev/null 2>&1 || die "на сервере нужен curl"
 
-# --- 1. config.yaml (только для server) ---
-if [ "$K3S_ROLE" = server ]; then
-  mkdir -p /etc/rancher/k3s
-  cfg=/etc/rancher/k3s/config.yaml
-  if [ -f "$cfg" ]; then
-    bak="$cfg.bak.$(date +%Y%m%d%H%M%S)"
-    cp "$cfg" "$bak"
-    warn "$cfg уже был, старая версия сохранена в $bak"
-  fi
-  {
-    echo '# Сгенерировано install_k3s.sh'
+# --- 1. запас ресурсов для системы ---
+# Без запаса поды могут выесть всю память и диск, и первой умирает сама ОС
+# вместе с ssh. system-reserved вычитается из того, что видно подам,
+# eviction-hard выселяет поды, когда свободного остаётся меньше порога.
+clamp() { # clamp ЗНАЧЕНИЕ МИН МАКС
+  v=$1; [ "$v" -lt "$2" ] && v=$2; [ "$v" -gt "$3" ] && v=$3; echo "$v"
+}
+if [ -z "$K3S_SYSTEM_RESERVED" ]; then
+  mem_kb=$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)
+  mem_mi=$(clamp $((mem_kb / 1024 / 10)) 256 2048)
+  cores=$(nproc 2>/dev/null || echo 1)
+  cpu_m=$(clamp $((cores * 100)) 100 1000)
+  K3S_SYSTEM_RESERVED="cpu=${cpu_m}m,memory=${mem_mi}Mi"
+  log "запас для системы по размеру машины: $K3S_SYSTEM_RESERVED"
+else
+  log "запас для системы: $K3S_SYSTEM_RESERVED"
+fi
+
+# --- 2. config.yaml ---
+# kubelet-arg нужен обеим ролям; tls-san и write-kubeconfig-mode — только server.
+mkdir -p /etc/rancher/k3s
+cfg=/etc/rancher/k3s/config.yaml
+if [ -f "$cfg" ]; then
+  bak="$cfg.bak.$(date +%Y%m%d%H%M%S)"
+  cp "$cfg" "$bak"
+  warn "$cfg уже был, старая версия сохранена в $bak"
+fi
+{
+  echo '# Сгенерировано install_k3s.sh'
+  if [ "$K3S_ROLE" = server ]; then
     echo 'write-kubeconfig-mode: "0600"'
     if [ -n "$K3S_TLS_SAN" ]; then
       echo 'tls-san:'
       printf '%s\n' "$K3S_TLS_SAN" | tr ',' '\n' \
         | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;/^$/d;s/^/  - /'
     fi
-  } > "$cfg"
-  chmod 0600 "$cfg"
-  log "записан $cfg"
-fi
+  fi
+  echo 'kubelet-arg:'
+  echo "  - system-reserved=$K3S_SYSTEM_RESERVED"
+  if [ -n "$K3S_EVICTION_HARD" ]; then
+    echo "  - eviction-hard=$K3S_EVICTION_HARD"
+  fi
+  # Логи контейнеров: болтливый под за месяцы забьёт диск.
+  if [ -n "$K3S_LOG_MAX_SIZE" ]; then
+    echo "  - container-log-max-size=$K3S_LOG_MAX_SIZE"
+  fi
+  if [ -n "$K3S_LOG_MAX_FILES" ] && [ "$K3S_LOG_MAX_FILES" -gt 0 ]; then
+    echo "  - container-log-max-files=$K3S_LOG_MAX_FILES"
+  fi
+} > "$cfg"
+chmod 0600 "$cfg"
+log "записан $cfg"
 
-# --- 2. официальный установщик ---
+# --- 3. официальный установщик ---
 log "запускаю установщик k3s: роль $K3S_ROLE, версия ${K3S_VERSION:-последняя стабильная}"
 installer=$(mktemp)
 curl -sfL https://get.k3s.io -o "$installer" || die "не скачался установщик с https://get.k3s.io"
@@ -52,7 +88,7 @@ else
 fi
 rm -f "$installer"
 
-# --- 3. sudo на kubectl для SSH_USER (только server) ---
+# --- 4. sudo на kubectl для SSH_USER (только server) ---
 if [ "$K3S_ROLE" = server ] && [ "$SSH_USER" != root ]; then
   kubectl_bin=$(command -v kubectl || echo /usr/local/bin/kubectl)
   printf '%s ALL=(root) NOPASSWD: %s\n' "$SSH_USER" "$kubectl_bin" > /etc/sudoers.d/k3s-kubectl
@@ -61,7 +97,7 @@ if [ "$K3S_ROLE" = server ] && [ "$SSH_USER" != root ]; then
   log "sudo -n kubectl разрешён пользователю $SSH_USER"
 fi
 
-# --- 4. ждём готовности (только server, если установщик запускал службу) ---
+# --- 5. ждём готовности (только server, если установщик запускал службу) ---
 if [ "$K3S_ROLE" = server ]; then
   case " $K3S_INSTALL_ENV " in
     *INSTALL_K3S_SKIP_START=true*) log "служба не запускалась (INSTALL_K3S_SKIP_START), готовность не жду" ;;

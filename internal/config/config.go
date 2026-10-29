@@ -46,18 +46,24 @@ type Config struct {
 	PrepareUpgrade         bool   `env:"PREPARE_UPGRADE" envDefault:"true"`
 	PrepareDisablePassword bool   `env:"PREPARE_DISABLE_PASSWORD" envDefault:"true"`
 	ServerTimezone         string `env:"SERVER_TIMEZONE" envDefault:"Asia/Almaty"`
+	PrepareRebootCron      string `env:"PREPARE_REBOOT_CRON" envDefault:"0 4 * * 0"`
+	JournalMaxUse          string `env:"JOURNAL_MAX_USE" envDefault:"500M"`
 
 	// install: установка k3s
-	K3sRole          string `env:"K3S_ROLE" envDefault:"server"`
-	K3sVersion       string `env:"K3S_VERSION"`
-	K3sTLSSan        string `env:"K3S_TLS_SAN"`
-	K3sExtraArgs     string `env:"K3S_EXTRA_ARGS"`
-	K3sInstallEnv    string `env:"K3S_INSTALL_ENV"`
-	K3sServerSSHHost string `env:"K3S_SERVER_SSH_HOST"`
-	K3sServerSSHPort int    `env:"K3S_SERVER_SSH_PORT" envDefault:"22"`
-	K3sServerSSHUser string `env:"K3S_SERVER_SSH_USER"`
-	K3sServerURL     string `env:"K3S_SERVER_URL"`
-	K3sToken         string `env:"K3S_TOKEN"`
+	K3sRole           string `env:"K3S_ROLE" envDefault:"server"`
+	K3sVersion        string `env:"K3S_VERSION"`
+	K3sTLSSan         string `env:"K3S_TLS_SAN"`
+	K3sExtraArgs      string `env:"K3S_EXTRA_ARGS"`
+	K3sInstallEnv     string `env:"K3S_INSTALL_ENV"`
+	K3sSystemReserved string `env:"K3S_SYSTEM_RESERVED"`
+	K3sEvictionHard   string `env:"K3S_EVICTION_HARD" envDefault:"memory.available<5%,nodefs.available<10%,imagefs.available<10%"`
+	K3sLogMaxSize     string `env:"K3S_LOG_MAX_SIZE" envDefault:"10Mi"`
+	K3sLogMaxFiles    int    `env:"K3S_LOG_MAX_FILES" envDefault:"3"`
+	K3sServerSSHHost  string `env:"K3S_SERVER_SSH_HOST"`
+	K3sServerSSHPort  int    `env:"K3S_SERVER_SSH_PORT" envDefault:"22"`
+	K3sServerSSHUser  string `env:"K3S_SERVER_SSH_USER"`
+	K3sServerURL      string `env:"K3S_SERVER_URL"`
+	K3sToken          string `env:"K3S_TOKEN"`
 
 	// access: доступ через ServiceAccount
 	APIURL            string `env:"API_URL"`
@@ -171,24 +177,22 @@ func findKey() string {
 }
 
 // Init создаёт файл servers/<имя>.env (папку заводит при необходимости):
-// находит ssh-ключ в ~/.ssh, подставляет умолчания и имя контекста, так что
-// человеку остаётся вписать SSH_HOST. Возвращает путь к файлу и собранные
-// настройки. Существующий файл не перезаписывает.
-func Init(name string) (string, *Config, error) {
-	if name == "" || strings.ContainsAny(name, `/\`) || strings.HasSuffix(name, ext) {
-		return "", nil, fmt.Errorf("имя сервера должно быть простым словом, напр. zeon, а не %q", name)
+// находит ssh-ключ в ~/.ssh, подставляет умолчания, имя контекста и
+// переданную версию k3s (пусто = последняя стабильная на момент install),
+// так что человеку остаётся вписать SSH_HOST. Возвращает путь к файлу и
+// собранные настройки. Существующий файл не перезаписывает.
+func Init(name, k3sVersion string) (string, *Config, error) {
+	if err := CheckInit(name); err != nil {
+		return "", nil, err
 	}
-
 	path := filepath.Join(Dir, name+ext)
-	if _, err := os.Stat(path); err == nil {
-		return "", nil, fmt.Errorf("сервер %q уже заведён: %s", name, path)
-	}
 
 	conf, err := parse(map[string]string{})
 	if err != nil {
 		return "", nil, fmt.Errorf("умолчания: %w", err)
 	}
 	conf.SSHKey = findKey()
+	conf.K3sVersion = k3sVersion
 	conf.fillDerived(name)
 
 	content, err := render(name, conf)
@@ -204,6 +208,26 @@ func Init(name string) (string, *Config, error) {
 	}
 
 	return path, conf, nil
+}
+
+// CheckInit проверяет, что сервер с таким именем можно завести: имя —
+// простое слово, файла ещё нет. Вынесено отдельно, чтобы init мог
+// отказать до сетевых запросов.
+func CheckInit(name string) error {
+	if name == "" || strings.ContainsAny(name, `/\`) || strings.HasSuffix(name, ext) {
+		return fmt.Errorf("имя сервера должно быть простым словом, напр. zeon, а не %q", name)
+	}
+	if path := filepath.Join(Dir, name+ext); fileExists(path) {
+		return fmt.Errorf("сервер %q уже заведён: %s", name, path)
+	}
+
+	return nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+
+	return err == nil
 }
 
 // render заполняет шаблон файла сервера.

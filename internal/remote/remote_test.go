@@ -37,15 +37,22 @@ func TestScript_Unknown(t *testing.T) {
 }
 
 func TestCloudInit(t *testing.T) {
-	s, err := CloudInit(CloudInitParams{SSHUser: "user", SSHPubkey: "ssh-ed25519 AAAA test", Timezone: "Asia/Almaty"})
+	s, err := CloudInit(CloudInitParams{SSHUser: "user", SSHPubkey: "ssh-ed25519 AAAA test", Timezone: "Asia/Almaty", RebootCron: "0 4 * * 0", JournalMaxUse: "500M"})
 	require.NoError(t, err)
 
 	assert.True(t, strings.HasPrefix(s, "#cloud-config\n"))
 	assert.Contains(t, s, "\ntimezone: Asia/Almaty\n")
 	assert.Contains(t, s, "\n  - name: user\n")
 	assert.Contains(t, s, "\n      - ssh-ed25519 AAAA test\n")
+	assert.Contains(t, s, "\n  - path: /etc/cron.d/k3sctl-reboot\n")
+	assert.Contains(t, s, "\n      0 4 * * 0 root [ -f /var/run/reboot-required ] && /sbin/shutdown -r now")
+	assert.Contains(t, s, "\n  - path: /etc/systemd/journald.conf.d/90-k3sctl.conf\n")
+	assert.Contains(t, s, "\n      SystemMaxUse=500M\n")
+	assert.Contains(t, s, "\n  - systemctl restart systemd-journald")
 
 	s, err = CloudInit(CloudInitParams{SSHUser: "user", SSHPubkey: "ssh-ed25519 AAAA"})
 	require.NoError(t, err)
 	assert.NotContains(t, s, "timezone:", "без часового пояса строки нет")
+	assert.NotContains(t, s, "k3sctl-reboot", "без расписания задания нет")
+	assert.NotContains(t, s, "journald", "без потолка журнала настройки нет")
 }

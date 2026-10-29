@@ -56,7 +56,7 @@ func TestInit_FillsDefaults(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".ssh"), 0o700))
 	inTempDir(t)
 
-	path, conf, err := Init("nokey")
+	path, conf, err := Init("nokey", "")
 	require.NoError(t, err)
 	assert.Empty(t, conf.SSHKey, "ключей в ~/.ssh нет — пусто")
 	assert.Empty(t, conf.SSHPubkey)
@@ -74,17 +74,21 @@ func TestInit_FillsDefaults(t *testing.T) {
 	assert.Contains(t, string(content), "\nSSH_KEY=\n")
 	assert.Contains(t, string(content), "\nCONTEXT_NAME=nokey\n")
 	assert.Contains(t, string(content), "\nSERVER_TIMEZONE=Asia/Almaty\n")
+	assert.Contains(t, string(content), "\nK3S_VERSION=\n", "версию не передали — пусто")
+	assert.Contains(t, string(content), "\nPREPARE_REBOOT_CRON=0 4 * * 0\n")
 
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".ssh", "id_ed25519"), nil, 0o600))
-	_, conf, err = Init("ed")
+	_, conf, err = Init("ed", "")
 	require.NoError(t, err)
 	assert.Equal(t, "~/.ssh/id_ed25519", conf.SSHKey)
 	assert.Equal(t, "~/.ssh/id_ed25519.pub", conf.SSHPubkey)
 
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".ssh", "id_rsa"), nil, 0o600))
-	_, conf, err = Init("rsa")
+	_, conf, err = Init("rsa", "v1.36.5+k3s1")
 	require.NoError(t, err)
 	assert.Equal(t, "~/.ssh/id_rsa", conf.SSHKey, "id_rsa в приоритете")
+	assert.Equal(t, "v1.36.5+k3s1", conf.K3sVersion, "версия k3s, переданная init")
+	assert.Equal(t, "0 4 * * 0", conf.PrepareRebootCron, "перезагрузка по воскресеньям в 04:00")
 
 	// то, что записано, читается обратно один в один
 	loaded, err := Load("rsa")
@@ -95,6 +99,13 @@ func TestInit_FillsDefaults(t *testing.T) {
 	assert.Equal(t, 22, loaded.SSHPort)
 	assert.Equal(t, "~/.ssh/id_rsa", loaded.SSHKey)
 	assert.Equal(t, "~/.ssh/id_rsa.pub", loaded.SSHPubkey)
+	assert.Equal(t, "v1.36.5+k3s1", loaded.K3sVersion)
+	assert.Equal(t, "0 4 * * 0", loaded.PrepareRebootCron)
+	assert.Empty(t, loaded.K3sSystemReserved, "пусто = по размеру машины")
+	assert.Equal(t, "memory.available<5%,nodefs.available<10%,imagefs.available<10%", loaded.K3sEvictionHard)
+	assert.Equal(t, "10Mi", loaded.K3sLogMaxSize)
+	assert.Equal(t, 3, loaded.K3sLogMaxFiles)
+	assert.Equal(t, "500M", loaded.JournalMaxUse)
 	assert.Equal(t, "root", loaded.BootstrapUser)
 	assert.True(t, loaded.PrepareUpgrade)
 	assert.True(t, loaded.PrepareDisablePassword)
@@ -108,7 +119,6 @@ func TestInit_FillsDefaults(t *testing.T) {
 	assert.False(t, loaded.SetCurrentContext)
 	for name, value := range map[string]string{
 		"SSH_EXTRA_OPTS":      loaded.SSHExtraOpts,
-		"K3S_VERSION":         loaded.K3sVersion,
 		"K3S_TLS_SAN":         loaded.K3sTLSSan,
 		"K3S_EXTRA_ARGS":      loaded.K3sExtraArgs,
 		"K3S_INSTALL_ENV":     loaded.K3sInstallEnv,
@@ -175,7 +185,7 @@ func TestInitListLoad(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, names, "пока ничего не заведено")
 
-	path, _, err := Init("zeon")
+	path, _, err := Init("zeon", "")
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join("servers", "zeon.env"), path)
 
@@ -183,14 +193,14 @@ func TestInitListLoad(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 
-	_, _, err = Init("zeon")
+	_, _, err = Init("zeon", "")
 	require.Error(t, err, "повторный init не перезаписывает")
-	_, _, err = Init("bad/name")
+	_, _, err = Init("bad/name", "")
 	require.Error(t, err)
-	_, _, err = Init("")
+	_, _, err = Init("", "")
 	require.Error(t, err)
 
-	_, _, err = Init("mechta")
+	_, _, err = Init("mechta", "")
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile("stray.env", nil, 0o600))
 

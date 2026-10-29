@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/rendau/k3s_config_merge/internal/config"
 	"github.com/rendau/k3s_config_merge/internal/remote"
@@ -49,6 +50,11 @@ func Install(ctx context.Context, c *config.Config) error {
 		"K3S_INSTALL_ENV": c.K3sInstallEnv,
 		"K3S_SERVER_URL":  serverURL,
 		"K3S_TOKEN":       token,
+
+		"K3S_SYSTEM_RESERVED": c.K3sSystemReserved,
+		"K3S_EVICTION_HARD":   c.K3sEvictionHard,
+		"K3S_LOG_MAX_SIZE":    c.K3sLogMaxSize,
+		"K3S_LOG_MAX_FILES":   strconv.Itoa(c.K3sLogMaxFiles),
 	})
 	if err != nil {
 		return err

@@ -50,9 +50,11 @@ func ShellQuote(s string) string {
 
 // CloudInitParams — подстановки в шаблон cloud-init.
 type CloudInitParams struct {
-	SSHUser   string
-	SSHPubkey string
-	Timezone  string
+	SSHUser       string
+	SSHPubkey     string
+	Timezone      string
+	RebootCron    string // расписание cron перезагрузки после обновлений; пусто = не заводить
+	JournalMaxUse string // потолок journald (SystemMaxUse); пусто = не трогать
 }
 
 // CloudInit печатает user-data для cloud-init по шаблону templates/cloud-init.yaml.tpl.

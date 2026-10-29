@@ -18,7 +18,7 @@ ssh_pwauth: false
 disable_root: true
 package_update: true
 package_upgrade: true
-packages: [sudo, curl, ca-certificates, bash-completion]
+packages: [sudo, curl, ca-certificates, bash-completion, cron]
 write_files:
   # Лимиты inotify: fluent-bit и другие агенты логов следят за файлами
   # контейнеров через inotify, дефолтных лимитов не хватает.
@@ -33,6 +33,24 @@ write_files:
       PasswordAuthentication no
       ChallengeResponseAuthentication no
       PermitRootLogin prohibit-password
+{{- if .RebootCron }}
+  # Перезагрузка после обновлений по расписанию, только если система её
+  # просит (/var/run/reboot-required); unattended-upgrades сам не перезагружает.
+  - path: /etc/cron.d/k3sctl-reboot
+    content: |
+      SHELL=/bin/sh
+      {{ .RebootCron }} root [ -f /var/run/reboot-required ] && /sbin/shutdown -r now "k3sctl: перезагрузка после обновлений"
+{{- end }}
+{{- if .JournalMaxUse }}
+  # Потолок системного журнала, иначе journald растёт до 10% диска.
+  - path: /etc/systemd/journald.conf.d/90-k3sctl.conf
+    content: |
+      [Journal]
+      SystemMaxUse={{ .JournalMaxUse }}
+{{- end }}
 runcmd:
   - sysctl --system
+{{- if .JournalMaxUse }}
+  - systemctl restart systemd-journald
+{{- end }}
   - systemctl restart ssh || systemctl restart sshd

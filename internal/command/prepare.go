@@ -24,9 +24,11 @@ func CloudInit(c *config.Config, path string) error {
 	}
 
 	text, err := remote.CloudInit(remote.CloudInitParams{
-		SSHUser:   c.SSHUser,
-		SSHPubkey: pubkey,
-		Timezone:  c.ServerTimezone,
+		SSHUser:       c.SSHUser,
+		SSHPubkey:     pubkey,
+		Timezone:      c.ServerTimezone,
+		RebootCron:    c.PrepareRebootCron,
+		JournalMaxUse: c.JournalMaxUse,
 	})
 	if err != nil {
 		return err
@@ -60,6 +62,8 @@ func Prepare(ctx context.Context, c *config.Config) error {
 		"PREPARE_UPGRADE":          strconv.FormatBool(c.PrepareUpgrade),
 		"PREPARE_DISABLE_PASSWORD": strconv.FormatBool(c.PrepareDisablePassword),
 		"SERVER_TIMEZONE":          c.ServerTimezone,
+		"PREPARE_REBOOT_CRON":      c.PrepareRebootCron,
+		"JOURNAL_MAX_USE":          c.JournalMaxUse,
 	})
 	if err != nil {
 		return err

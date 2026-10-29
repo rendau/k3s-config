@@ -100,6 +100,7 @@ check "пользователь user входит по ключу и имеет 
 check "bash-completion установлен" tssh user@127.0.0.1 'test -f /usr/share/bash-completion/bash_completion'
 check "sysctl для inotify записан" tssh root@127.0.0.1 'grep -q max_user_watches /etc/sysctl.d/90-k3s.conf'
 check "часовой пояс Asia/Almaty" tssh root@127.0.0.1 'readlink /etc/localtime | grep -q Asia/Almaty'
+check "на alpine нет /etc/cron.d — перезагрузка по расписанию пропущена без ошибки" tssh root@127.0.0.1 'test ! -f /etc/cron.d/k3sctl-reboot'
 out=$(ssh -p "$SSH_PORT" -o PubkeyAuthentication=no -o BatchMode=yes -o StrictHostKeyChecking=no \
         -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@127.0.0.1 true 2>&1 || true)
 case "$out" in
@@ -112,12 +113,16 @@ check "файл test.cloud-init.yaml появился" test -f "$TMP/test.cloud-
 cloud_init=$(cat "$TMP/test.cloud-init.yaml")
 check "cloud-init начинается с #cloud-config" test "$(head -1 "$TMP/test.cloud-init.yaml")" = '#cloud-config'
 check "cloud-init содержит пользователя" grep -q '^  - name: user$' <<<"$cloud_init"
+check "cloud-init содержит перезагрузку по расписанию" grep -q 'k3sctl-reboot' <<<"$cloud_init"
 check "cloud-init подставил ключ" grep -q 'ssh-ed25519 .* k3s-sa-test$' <<<"$cloud_init"
 check "cloud-init подставил часовой пояс" grep -q '^timezone: Asia/Almaty$' <<<"$cloud_init"
 
 echo "--- k3sctl install ---"
 "$K3SCTL" install "$TMP/test.env"
 check "config.yaml с tls-san записан" tssh root@127.0.0.1 'grep -q "^  - localhost" /etc/rancher/k3s/config.yaml'
+check "config.yaml с запасом ресурсов для системы" tssh root@127.0.0.1 'grep -Eq "^  - system-reserved=cpu=[0-9]+m,memory=[0-9]+Mi$" /etc/rancher/k3s/config.yaml'
+check "config.yaml с порогом выселения" tssh root@127.0.0.1 'grep -q "^  - eviction-hard=memory.available<5%" /etc/rancher/k3s/config.yaml'
+check "config.yaml с лимитом логов контейнеров" tssh root@127.0.0.1 'grep -q "^  - container-log-max-size=10Mi" /etc/rancher/k3s/config.yaml && grep -q "^  - container-log-max-files=3" /etc/rancher/k3s/config.yaml'
 check "установщик создал службу k3s" tssh root@127.0.0.1 'test -f /etc/init.d/k3s'
 check "kubectl установлен" tssh root@127.0.0.1 'test -L /usr/local/bin/kubectl'
 check "sudo на kubectl для user выдан" tssh root@127.0.0.1 'test -f /etc/sudoers.d/k3s-kubectl'

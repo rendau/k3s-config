@@ -11,6 +11,7 @@ import (
 	"github.com/rendau/k3s_config_merge/internal/command"
 	"github.com/rendau/k3s_config_merge/internal/config"
 	"github.com/rendau/k3s_config_merge/internal/constant"
+	"github.com/rendau/k3s_config_merge/internal/k3s"
 	"github.com/rendau/k3s_config_merge/internal/ui"
 )
 
@@ -59,7 +60,7 @@ func Run(args []string) int {
 
 	switch name {
 	case "init":
-		err = runInit(arg)
+		err = runInit(ctx, arg)
 	case "list":
 		err = runList()
 	case "cloud-init":
@@ -109,12 +110,20 @@ func withConfig(arg string, run func(*config.Config) error) error {
 	return run(conf)
 }
 
-func runInit(name string) error {
+func runInit(ctx context.Context, name string) error {
 	if name == "" {
 		return fmt.Errorf("укажите имя сервера: k3sctl init <имя>")
 	}
+	if err := config.CheckInit(name); err != nil {
+		return err
+	}
 
-	path, conf, err := config.Init(name)
+	version, err := k3s.StableVersion(ctx)
+	if err != nil {
+		ui.Warn("не узнал стабильную версию k3s (%v): K3S_VERSION оставляю пустым, install возьмёт последнюю", err)
+	}
+
+	path, conf, err := config.Init(name, version)
 	if err != nil {
 		return err
 	}
@@ -124,6 +133,9 @@ func runInit(name string) error {
 		ui.Info("ssh-ключ: %s (и %s)", conf.SSHKey, conf.SSHPubkey)
 	} else {
 		ui.Warn("ssh-ключ в ~/.ssh не найден (id_rsa, id_ed25519, id_ecdsa): впишите SSH_KEY и SSH_PUBKEY")
+	}
+	if version != "" {
+		ui.Info("версия k3s: %s (стабильная на сегодня)", version)
 	}
 	ui.Info("дальше: k3sctl cloud-init %s (или впишите SSH_HOST и k3sctl prepare), install, access", name)
 
