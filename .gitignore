@@ -31,3 +31,6 @@ temp_config.yaml
 
 # сборка k3sctl
 build/
+
+# файлы серверов k3sctl (k3sctl init <имя>)
+servers/

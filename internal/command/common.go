@@ -23,16 +23,13 @@ func target(c *config.Config, user string) sshx.Target {
 	}
 }
 
-// loadPubkey читает публичный ключ из SSH_PUBKEY (по умолчанию SSH_KEY + ".pub").
+// loadPubkey читает публичный ключ из SSH_PUBKEY (init записывает его в файл сервера,
+// для файлов вручную config подставляет SSH_KEY + ".pub").
 func loadPubkey(c *config.Config) (string, error) {
-	path := c.SSHPubkey
-	if path == "" && c.SSHKey != "" {
-		path = c.SSHKey + ".pub"
+	if c.SSHPubkey == "" {
+		return "", config.Missing("SSH_KEY / SSH_PUBKEY")
 	}
-	if path == "" {
-		return "", config.Missing("SSH_PUBKEY (путь к публичному ключу)")
-	}
-	path = util.ExpandHome(path)
+	path := util.ExpandHome(c.SSHPubkey)
 
 	f, err := os.Open(path)
 	if err != nil {

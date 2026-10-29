@@ -18,7 +18,7 @@ const usageText = `k3sctl — новый сервер с k3s: подготови
 
 Порядок для нового сервера (здесь он назван zeon):
 
-  k3sctl init zeon          завести сервер: создаёт %s/zeon.env, его нужно заполнить
+  k3sctl init zeon          завести сервер: создаёт servers/zeon.env, его нужно заполнить
   k3sctl cloud-init zeon    напечатать user-data для поля cloud-init при создании виртуалки
   k3sctl prepare zeon       ...или подготовить уже созданный сервер по SSH (под root)
   k3sctl install zeon       поставить k3s (K3S_ROLE в файле: server или agent)
@@ -26,11 +26,11 @@ const usageText = `k3sctl — новый сервер с k3s: подготови
 
 Ещё:
 
-  k3sctl list               какие серверы заведены
+  k3sctl list               какие серверы заведены (папка servers/)
   k3sctl version
 
-Вместо имени сервера можно дать путь к файлу настроек; без аргумента
-берётся .env из текущего каталога.
+Имя сервера — это файл servers/<имя>.env в текущей папке. Вместо имени
+можно дать путь к файлу настроек.
 `
 
 // Run выполняет команду по аргументам (без имени программы) и возвращает код выхода.
@@ -96,7 +96,7 @@ func isHelp(s string) bool {
 }
 
 func printUsage(w *os.File) {
-	fmt.Fprintf(w, usageText, config.Dir())
+	fmt.Fprint(w, usageText)
 }
 
 func withConfig(arg string, run func(*config.Config) error) error {
@@ -113,13 +113,18 @@ func runInit(name string) error {
 		return fmt.Errorf("укажите имя сервера: k3sctl init <имя>")
 	}
 
-	path, err := config.Init(name)
+	path, conf, err := config.Init(name)
 	if err != nil {
 		return err
 	}
 
 	ui.Info("создан %s", path)
-	ui.Info("заполните его и дальше: k3sctl cloud-init %s (или prepare), install, access", name)
+	if conf.SSHKey != "" {
+		ui.Info("ssh-ключ: %s (и %s)", conf.SSHKey, conf.SSHPubkey)
+	} else {
+		ui.Warn("ssh-ключ в ~/.ssh не найден (id_rsa, id_ed25519, id_ecdsa): впишите SSH_KEY и SSH_PUBKEY")
+	}
+	ui.Info("впишите SSH_HOST и дальше: k3sctl cloud-init %s (или prepare), install, access", name)
 
 	return nil
 }
@@ -130,7 +135,7 @@ func runList() error {
 		return err
 	}
 	if len(names) == 0 {
-		ui.Info("серверов пока нет (каталог %s); завести: k3sctl init <имя>", config.Dir())
+		ui.Info("серверов нет (папка %s/); завести: k3sctl init <имя>", config.Dir)
 
 		return nil
 	}

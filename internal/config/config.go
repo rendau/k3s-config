@@ -1,9 +1,12 @@
 // Package config читает настройки сервера из файла формата .env.
-// Файлы живут в ~/.config/k3sctl/<имя>.env, образец — example.env (встроен).
+// Файлы серверов лежат в подпапке servers/ текущего каталога: servers/<имя>.env;
+// создаёт их Init по шаблону server.env.tpl (встроен), сразу подставляя
+// найденный ssh-ключ и значения по умолчанию.
 // Значения из файла имеют приоритет над переменными окружения процесса.
 package config
 
 import (
+	"bytes"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -12,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"text/template"
 
 	"github.com/caarlos0/env/v9"
 	"github.com/joho/godotenv"
@@ -19,19 +23,20 @@ import (
 	"github.com/rendau/k3s_config_merge/internal/util"
 )
 
-//go:embed example.env
-var example []byte
+//go:embed server.env.tpl
+var serverTpl string
 
 const (
-	dirName = "k3sctl"
-	ext     = ".env"
+	ext = ".env"
+	// Dir — подпапка текущего каталога с файлами серверов.
+	Dir = "servers"
 )
 
 type Config struct {
 	// SSH до сервера
 	SSHHost      string `env:"SSH_HOST"`
 	SSHPort      int    `env:"SSH_PORT" envDefault:"22"`
-	SSHUser      string `env:"SSH_USER"`
+	SSHUser      string `env:"SSH_USER" envDefault:"user"`
 	SSHKey       string `env:"SSH_KEY"`
 	SSHPubkey    string `env:"SSH_PUBKEY"`
 	SSHExtraOpts string `env:"SSH_EXTRA_OPTS"`
@@ -40,7 +45,7 @@ type Config struct {
 	BootstrapUser          string `env:"BOOTSTRAP_USER" envDefault:"root"`
 	PrepareUpgrade         bool   `env:"PREPARE_UPGRADE" envDefault:"true"`
 	PrepareDisablePassword bool   `env:"PREPARE_DISABLE_PASSWORD" envDefault:"true"`
-	ServerTimezone         string `env:"SERVER_TIMEZONE"`
+	ServerTimezone         string `env:"SERVER_TIMEZONE" envDefault:"Asia/Almaty"`
 
 	// install: установка k3s
 	K3sRole          string `env:"K3S_ROLE" envDefault:"server"`
@@ -56,7 +61,7 @@ type Config struct {
 
 	// access: доступ через ServiceAccount
 	APIURL            string `env:"API_URL"`
-	SAName            string `env:"SA_NAME"`
+	SAName            string `env:"SA_NAME" envDefault:"admin"`
 	SANamespace       string `env:"SA_NAMESPACE" envDefault:"kube-system"`
 	ClusterRole       string `env:"CLUSTER_ROLE" envDefault:"cluster-admin"`
 	SATokenTTL        string `env:"SA_TOKEN_TTL"`
@@ -65,41 +70,29 @@ type Config struct {
 	SetCurrentContext bool   `env:"SET_CURRENT_CONTEXT" envDefault:"false"`
 }
 
-// Dir — каталог с файлами серверов: $XDG_CONFIG_HOME/k3sctl, обычно ~/.config/k3sctl
-// (и на macOS тоже, а не Library/Application Support).
-func Dir() string {
-	base := os.Getenv("XDG_CONFIG_HOME")
-	if base == "" {
-		base = util.ExpandHome("~/.config")
-	}
-
-	return filepath.Join(base, dirName)
-}
-
 // Resolve превращает аргумент команды в путь к файлу настроек:
-//   - пусто — .env в текущем каталоге;
-//   - путь (есть / или \, оканчивается на .env, либо такой файл существует) — он сам;
-//   - иначе имя сервера — ~/.config/k3sctl/<имя>.env.
+//   - имя сервера — servers/<имя>.env в текущем каталоге;
+//   - путь или имя файла с .env — как есть (с раскрытием ~).
 func Resolve(arg string) string {
-	switch {
-	case arg == "":
-		return ".env"
-	case strings.ContainsAny(arg, `/\`), strings.HasSuffix(arg, ext), fileExists(arg):
+	if strings.ContainsAny(arg, `/\`) || strings.HasSuffix(arg, ext) {
 		return util.ExpandHome(arg)
-	default:
-		return filepath.Join(Dir(), arg+ext)
 	}
+
+	return filepath.Join(Dir, arg+ext)
 }
 
 // Load читает файл настроек сервера по аргументу команды (см. Resolve).
 // Переменные окружения процесса — основа, значения из файла кладутся поверх них.
 func Load(arg string) (*Config, error) {
+	if arg == "" {
+		return nil, fmt.Errorf("укажите сервер: k3sctl <команда> <имя>; заведённые показывает k3sctl list")
+	}
 	path := Resolve(arg)
 
 	fileVars, err := godotenv.Read(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			if path == filepath.Join(Dir(), arg+ext) {
+			if path == filepath.Join(Dir, arg+ext) {
 				return nil, fmt.Errorf("сервер %q не заведён: нет файла %s (создать: k3sctl init %s)", arg, path, arg)
 			}
 
@@ -119,52 +112,121 @@ func Load(arg string) (*Config, error) {
 		vars[k] = v
 	}
 
-	conf := &Config{}
-	if err = env.ParseWithOptions(conf, env.Options{Environment: vars}); err != nil {
+	conf, err := parse(vars)
+	if err != nil {
 		return nil, fmt.Errorf("разбор %s: %w", path, err)
+	}
+	conf.fillDerived(serverName(path))
+
+	return conf, nil
+}
+
+// parse собирает Config из набора переменных; чего нет — берётся из envDefault.
+func parse(vars map[string]string) (*Config, error) {
+	conf := &Config{}
+	if err := env.ParseWithOptions(conf, env.Options{Environment: vars}); err != nil {
+		return nil, err
 	}
 
 	return conf, nil
 }
 
-// Init создаёт файл настроек нового сервера из образца и возвращает его путь.
-// Существующий файл не перезаписывает.
-func Init(name string) (string, error) {
-	if name == "" || strings.ContainsAny(name, `/\`) || strings.HasSuffix(name, ext) {
-		return "", fmt.Errorf("имя сервера должно быть простым словом, напр. zeon, а не %q", name)
-	}
-
-	path := filepath.Join(Dir(), name+ext)
-	if fileExists(path) {
-		return "", fmt.Errorf("сервер %q уже заведён: %s", name, path)
-	}
-
-	if err := os.MkdirAll(Dir(), 0o700); err != nil {
-		return "", fmt.Errorf("каталог %s: %w", Dir(), err)
-	}
-	if err := os.WriteFile(path, example, 0o600); err != nil {
-		return "", fmt.Errorf("запись %s: %w", path, err)
-	}
-
-	return path, nil
+// serverName — имя сервера по пути к его файлу: servers/zeon.env → zeon.
+func serverName(path string) string {
+	return strings.TrimSuffix(filepath.Base(path), ext)
 }
 
-// List возвращает имена заведённых серверов (файлы *.env в Dir).
-func List() ([]string, error) {
-	entries, err := os.ReadDir(Dir())
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
-		}
+// fillDerived заполняет то, что однозначно следует из уже заданного:
+// публичный ключ (SSH_KEY + .pub), имя контекста (имя сервера).
+// Это страховка для файлов, написанных вручную; init записывает всё явно.
+func (c *Config) fillDerived(name string) {
+	if c.SSHPubkey == "" && c.SSHKey != "" {
+		c.SSHPubkey = c.SSHKey + ".pub"
+	}
+	if c.ContextName == "" {
+		c.ContextName = name
+	}
+}
 
-		return nil, fmt.Errorf("каталог %s: %w", Dir(), err)
+// defaultKeys — где init ищет приватный ssh-ключ, по порядку.
+var defaultKeys = []string{"~/.ssh/id_rsa", "~/.ssh/id_ed25519", "~/.ssh/id_ecdsa"}
+
+// findKey возвращает первый существующий ключ из defaultKeys или "".
+func findKey() string {
+	for _, k := range defaultKeys {
+		if _, err := os.Stat(util.ExpandHome(k)); err == nil {
+			return k
+		}
+	}
+
+	return ""
+}
+
+// Init создаёт файл servers/<имя>.env (папку заводит при необходимости):
+// находит ssh-ключ в ~/.ssh, подставляет умолчания и имя контекста, так что
+// человеку остаётся вписать SSH_HOST. Возвращает путь к файлу и собранные
+// настройки. Существующий файл не перезаписывает.
+func Init(name string) (string, *Config, error) {
+	if name == "" || strings.ContainsAny(name, `/\`) || strings.HasSuffix(name, ext) {
+		return "", nil, fmt.Errorf("имя сервера должно быть простым словом, напр. zeon, а не %q", name)
+	}
+
+	path := filepath.Join(Dir, name+ext)
+	if _, err := os.Stat(path); err == nil {
+		return "", nil, fmt.Errorf("сервер %q уже заведён: %s", name, path)
+	}
+
+	conf, err := parse(map[string]string{})
+	if err != nil {
+		return "", nil, fmt.Errorf("умолчания: %w", err)
+	}
+	conf.SSHKey = findKey()
+	conf.fillDerived(name)
+
+	content, err := render(name, conf)
+	if err != nil {
+		return "", nil, err
+	}
+
+	if err = os.MkdirAll(Dir, 0o700); err != nil {
+		return "", nil, fmt.Errorf("папка %s: %w", Dir, err)
+	}
+	if err = os.WriteFile(path, content, 0o600); err != nil {
+		return "", nil, fmt.Errorf("запись %s: %w", path, err)
+	}
+
+	return path, conf, nil
+}
+
+// render заполняет шаблон файла сервера.
+func render(name string, conf *Config) ([]byte, error) {
+	tpl, err := template.New("server.env").Parse(serverTpl)
+	if err != nil {
+		return nil, fmt.Errorf("шаблон файла сервера: %w", err)
+	}
+
+	var buf bytes.Buffer
+	data := struct {
+		Name string
+		*Config
+	}{name, conf}
+	if err = tpl.Execute(&buf, data); err != nil {
+		return nil, fmt.Errorf("шаблон файла сервера: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+// List возвращает имена заведённых серверов (файлы servers/*.env).
+func List() ([]string, error) {
+	matches, err := filepath.Glob(filepath.Join(Dir, "*"+ext))
+	if err != nil {
+		return nil, err
 	}
 
 	var names []string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ext) {
-			names = append(names, strings.TrimSuffix(e.Name(), ext))
-		}
+	for _, m := range matches {
+		names = append(names, strings.TrimSuffix(filepath.Base(m), ext))
 	}
 	sort.Strings(names)
 
@@ -174,10 +236,4 @@ func List() ([]string, error) {
 // Missing — ошибка «в файле настроек не задано ИМЯ».
 func Missing(name string) error {
 	return fmt.Errorf("в файле настроек не задано %s", name)
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-
-	return err == nil && !info.IsDir()
 }

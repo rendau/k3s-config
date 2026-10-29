@@ -50,9 +50,11 @@ echo "--- сборка k3sctl ---"
 K3SCTL=$TMP/k3sctl
 
 echo "--- k3sctl init / list ---"
-check "init создаёт файл сервера" env HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home/.config" "$K3SCTL" init demo
-check "файл сервера лежит в ~/.config/k3sctl" test -f "$TMP/home/.config/k3sctl/demo.env"
-check "list показывает сервер" test "$(HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home/.config" "$K3SCTL" list)" = demo
+mkdir -p "$TMP/work"
+check "init создаёт файл сервера в servers/" bash -c 'cd "$1" && "$2" init demo' _ "$TMP/work" "$K3SCTL"
+check "файл servers/demo.env появился" test -f "$TMP/work/servers/demo.env"
+check "list показывает сервер" test "$(cd "$TMP/work" && "$K3SCTL" list)" = demo
+check "повторный init не перезаписывает" test "$(cd "$TMP/work" && "$K3SCTL" init demo >/dev/null 2>&1; echo $?)" = 1
 
 echo "--- сборка образа $IMAGE (k3s $K3S_VERSION) ---"
 docker build -q --build-arg "K3S_VERSION=$K3S_VERSION" -t "$IMAGE" "$HERE" >/dev/null
