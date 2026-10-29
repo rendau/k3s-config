@@ -2,7 +2,9 @@
 # Переменные ставит в начало локальный скрипт: SSH_USER, SSH_PUBKEY_CONTENT
 # (публичные ключи, по одному на строку),
 # PREPARE_UPGRADE, PREPARE_DISABLE_PASSWORD, SERVER_TIMEZONE, PREPARE_REBOOT_CRON,
-# JOURNAL_MAX_USE.
+# JOURNAL_MAX_USE, PREPARE_REBOOT (auto|true|false), ROOT_KEY (true = положить
+# первый ключ и root-у: вошли по паролю, ключа у него нет).
+# Единственная строка на stdout — REBOOT=yes, если сервер уходит в перезагрузку.
 set -eu
 
 log()  { printf '  [сервер] %s\n' "$*" >&2; }
@@ -16,6 +18,8 @@ PREPARE_DISABLE_PASSWORD=${PREPARE_DISABLE_PASSWORD:-true}
 SERVER_TIMEZONE=${SERVER_TIMEZONE:-}
 PREPARE_REBOOT_CRON=${PREPARE_REBOOT_CRON:-}
 JOURNAL_MAX_USE=${JOURNAL_MAX_USE:-}
+PREPARE_REBOOT=${PREPARE_REBOOT:-auto}
+ROOT_KEY=${ROOT_KEY:-false}
 
 # --- 1. пакеты ---
 if command -v apt-get >/dev/null 2>&1; then
@@ -87,6 +91,21 @@ done
 chmod 700 "$home/.ssh"
 chmod 600 "$home/.ssh/authorized_keys"
 chown -R "$SSH_USER:" "$home/.ssh"
+
+if [ "$ROOT_KEY" = true ]; then
+  root_home=$(getent passwd root | cut -d: -f6)
+  mkdir -p "$root_home/.ssh"
+  touch "$root_home/.ssh/authorized_keys"
+  main_key=$(printf '%s\n' "$SSH_PUBKEY_CONTENT" | head -1)
+  if grep -qxF "$main_key" "$root_home/.ssh/authorized_keys"; then
+    log "ключ уже у root"
+  else
+    printf '%s\n' "$main_key" >> "$root_home/.ssh/authorized_keys"
+    log "ключ добавлен root-у: вошли по паролю, дальше root по ключу"
+  fi
+  chmod 700 "$root_home/.ssh"
+  chmod 600 "$root_home/.ssh/authorized_keys"
+fi
 
 # --- 5. sysctl для агентов логов ---
 cat > /etc/sysctl.d/90-k3s.conf <<'SYSCTL'
@@ -176,8 +195,31 @@ elif [ -n "$JOURNAL_MAX_USE" ]; then
   warn "journald нет, потолок журнала не ставлю"
 fi
 
-# --- 10. итог ---
-if [ -f /var/run/reboot-required ]; then
-  warn "после обновления пакетов нужна перезагрузка (/var/run/reboot-required)"
-fi
+# --- 10. итог и перезагрузка ---
+# После apt upgrade на свежем образе почти всегда новое ядро. auto
+# перезагружает только пока k3s не установлен: на рабочем сервере это
+# простой, там перезагрузкой занимается k3sctl-reboot по расписанию.
 log "сервер подготовлен"
+if [ -f /var/run/reboot-required ]; then
+  k3s_present=false
+  { command -v k3s >/dev/null 2>&1 || [ -x /usr/local/bin/k3s ]; } && k3s_present=true
+  do_reboot=false
+  case "$PREPARE_REBOOT" in
+    true) do_reboot=true ;;
+    auto) [ "$k3s_present" = false ] && do_reboot=true ;;
+    false) ;;
+    *) warn "PREPARE_REBOOT=$PREPARE_REBOOT не понял (auto|true|false), не перезагружаю" ;;
+  esac
+  if [ "$do_reboot" = true ]; then
+    log "после обновлений нужна перезагрузка — перезагружаю сервер"
+    echo "REBOOT=yes"
+    # отложенно и в фоне, чтобы ssh-сессия завершилась штатно
+    nohup sh -c 'sleep 3; reboot' >/dev/null 2>&1 &
+  elif [ "$k3s_present" = true ] && [ "$PREPARE_REBOOT" = auto ]; then
+    warn "после обновлений нужна перезагрузка; k3s уже установлен, поэтому не перезагружаю (PREPARE_REBOOT=auto), её сделает k3sctl-reboot по расписанию"
+  else
+    warn "после обновления пакетов нужна перезагрузка (/var/run/reboot-required)"
+  fi
+else
+  log "перезагрузка не требуется (нет /var/run/reboot-required)"
+fi

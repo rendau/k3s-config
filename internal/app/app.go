@@ -12,6 +12,7 @@ import (
 	"github.com/rendau/k3s-config/internal/config"
 	"github.com/rendau/k3s-config/internal/constant"
 	"github.com/rendau/k3s-config/internal/k3s"
+	"github.com/rendau/k3s-config/internal/sshx"
 	"github.com/rendau/k3s-config/internal/ui"
 )
 
@@ -37,6 +38,16 @@ const usageText = `k3sctl — новый сервер с k3s: подготови
 
 // Run выполняет команду по аргументам (без имени программы) и возвращает код выхода.
 func Run(args []string) int {
+	// Режим помощника SSH_ASKPASS: ssh вызывает k3sctl за паролем (см. sshx.Askpass).
+	if ok, err := sshx.Askpass(os.Stdout); ok {
+		if err != nil {
+			ui.Error("askpass: %v", err)
+
+			return 1
+		}
+
+		return 0
+	}
 	if len(args) == 0 || isHelp(args[0]) {
 		printUsage(os.Stdout)
 

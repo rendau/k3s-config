@@ -44,12 +44,18 @@ type Config struct {
 	SSHExtraOpts    string `env:"SSH_EXTRA_OPTS"`
 
 	// prepare: подготовка свежего сервера
-	BootstrapUser          string `env:"BOOTSTRAP_USER" envDefault:"root"`
+	BootstrapUser string `env:"BOOTSTRAP_USER" envDefault:"root"`
+	// BootstrapPassword — пароль BOOTSTRAP_USER от провайдера для первого входа:
+	// пусто = только ключ, ask = спросить в терминале, иначе сам пароль.
+	BootstrapPassword      string `env:"BOOTSTRAP_PASSWORD"`
 	PrepareUpgrade         bool   `env:"PREPARE_UPGRADE" envDefault:"true"`
 	PrepareDisablePassword bool   `env:"PREPARE_DISABLE_PASSWORD" envDefault:"true"`
 	ServerTimezone         string `env:"SERVER_TIMEZONE" envDefault:"Asia/Almaty"`
 	PrepareRebootCron      string `env:"PREPARE_REBOOT_CRON" envDefault:"0 4 * * 0"`
-	JournalMaxUse          string `env:"JOURNAL_MAX_USE" envDefault:"500M"`
+	// PrepareReboot — перезагрузка в конце prepare, если система её просит:
+	// auto (только пока k3s не установлен), true, false.
+	PrepareReboot string `env:"PREPARE_REBOOT" envDefault:"auto"`
+	JournalMaxUse string `env:"JOURNAL_MAX_USE" envDefault:"500M"`
 
 	// install: установка k3s
 	K3sRole           string `env:"K3S_ROLE" envDefault:"server"`

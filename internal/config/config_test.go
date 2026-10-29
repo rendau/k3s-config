@@ -101,6 +101,7 @@ func TestInit_FillsDefaults(t *testing.T) {
 	assert.Equal(t, "~/.ssh/id_rsa.pub", loaded.SSHPubkey)
 	assert.Equal(t, "v1.36.5+k3s1", loaded.K3sVersion)
 	assert.Equal(t, "0 4 * * 0", loaded.PrepareRebootCron)
+	assert.Equal(t, "auto", loaded.PrepareReboot)
 	assert.Empty(t, loaded.K3sSystemReserved, "пусто = по размеру машины")
 	assert.Equal(t, "memory.available<5%,nodefs.available<10%,imagefs.available<10%", loaded.K3sEvictionHard)
 	assert.Equal(t, "10Mi", loaded.K3sLogMaxSize)

@@ -24,12 +24,20 @@ SSH_EXTRA_OPTS=
 # ---------- k3sctl prepare / cloud-init ----------
 # под кем заходить на свежий сервер
 BOOTSTRAP_USER={{.BootstrapUser}}
+# пароль от провайдера для первого входа, если ключа у root ещё нет:
+# пусто = только по ключу, ask = спросить в терминале, иначе сам пароль.
+# Нужен один раз: prepare положит root-у ваш ключ и закроет вход по паролю
+BOOTSTRAP_PASSWORD=
 # обновить пакеты
 PREPARE_UPGRADE={{.PrepareUpgrade}}
 # запретить вход по паролю всем, включая root
 PREPARE_DISABLE_PASSWORD={{.PrepareDisablePassword}}
 # часовой пояс сервера; пусто = не трогать
 SERVER_TIMEZONE={{.ServerTimezone}}
+# перезагрузить в конце prepare, если после обновлений это нужно:
+# auto = только пока k3s ещё не установлен (свежий сервер), true = всегда,
+# false = никогда, только предупредить
+PREPARE_REBOOT={{.PrepareReboot}}
 # перезагрузка после обновлений, только если система её просит: расписание
 # cron по времени сервера (по умолчанию воскресенье 04:00); пусто = не заводить
 PREPARE_REBOOT_CRON={{.PrepareRebootCron}}

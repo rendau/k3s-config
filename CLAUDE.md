@@ -20,14 +20,25 @@ Go-программа для нового сервера с k3s:
 - `init` — создать файл сервера из образца; `list` — заведённые серверы.
 - `cloud-init` — записать user-data по шаблону в `servers/<имя>.cloud-init.yaml`
   (путь считает `config.CloudInitPath`, рядом с файлом настроек).
-- `prepare` — подготовка свежего сервера по SSH под `BOOTSTRAP_USER` (root):
-  пользователь, ключи (`SSH_PUBKEY` + `SSH_EXTRA_PUBKEYS` через запятую,
+- `prepare` — подготовка свежего сервера по SSH. Вход выбирает
+  `command.bootstrap`: `SSH_USER` по ключу → `BOOTSTRAP_USER` по ключу →
+  `BOOTSTRAP_USER` по паролю (`BOOTSTRAP_PASSWORD`: пусто / `ask` /
+  значение). Пароль уходит в ssh через помощника: `sshx.Target.Password`
+  ставит `SSH_ASKPASS=<сам k3sctl>`, `SSH_ASKPASS_REQUIRE=force` и путь к
+  временному файлу 0600 в `K3SCTL_ASKPASS_FILE`; `app.Run` в самом начале
+  проверяет `sshx.Askpass` и в этом режиме только печатает пароль. При входе
+  по паролю скрипт получает `ROOT_KEY=true` и кладёт первый ключ root-у.
+  Шаги: пользователь, ключи (`SSH_PUBKEY` + `SSH_EXTRA_PUBKEYS` через запятую,
   путь или ключ строкой; `command.loadPubkeys`, в скрипт уходят по одному
   на строку в `SSH_PUBKEY_CONTENT`), запрет паролей, пакеты, sysctl, часовой пояс,
   `/etc/cron.d/k3sctl-reboot` (перезагрузка по `PREPARE_REBOOT_CRON`, если
   есть `/var/run/reboot-required`; на Alpine нет `/etc/cron.d` — пропуск),
   `/etc/systemd/journald.conf.d/90-k3sctl.conf` (`SystemMaxUse` из
-  `JOURNAL_MAX_USE`; без journald — пропуск).
+  `JOURNAL_MAX_USE`; без journald — пропуск). В конце, если есть
+  `/var/run/reboot-required`: `PREPARE_REBOOT` auto (перезагрузить, только
+  пока k3s не установлен) / true / false; скрипт печатает на stdout
+  `REBOOT=yes` и уходит в `reboot` фоном, Go-часть (`waitAfterReboot`) ждёт
+  возврата по ssh до 3 минут и повторяет проверку входа и sudo.
 - `install` — k3s официальным установщиком, роль `server`/`agent`;
   `config.yaml` пишется обеим ролям: `kubelet-arg` с `system-reserved`
   (`K3S_SYSTEM_RESERVED`, пусто = скрипт считает по `/proc/meminfo` и
@@ -77,7 +88,7 @@ Go-программа для нового сервера с k3s:
 | Что | Значение |
 |---|---|
 | образ и контейнер | `k3s-sa-test` (из `test/Dockerfile`: alpine 3.22 + sshd + openrc + бинарник k3s `v1.33.5+k3s1` с GitHub; sudo/bash ставит сам `k3sctl prepare`) |
-| SSH | `127.0.0.1:2222`, пользователь `root` по ключу; `user` заводит `k3sctl prepare` |
+| SSH | `127.0.0.1:2222`; root стартует только с паролем (`ROOT_PASSWORD` контейнеру, как у провайдера), `prepare` заходит по нему через `BOOTSTRAP_PASSWORD` и кладёт root-у ключ; `user` заводит `k3sctl prepare` |
 | API k3s | `https://127.0.0.1:16443`, только control plane (`--disable-agent`), поэтому `get nodes` пустой |
 | ключ SSH | генерируется на каждый прогон во временном каталоге, нигде не хранится |
 | kubeconfig и файл настроек | во временном каталоге (`LOCAL_KUBECONFIG`, командам передаётся путь к файлу); `~/.kube/config` не используется, `init`/`list` проверяются во временной рабочей папке |

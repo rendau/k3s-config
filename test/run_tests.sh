@@ -62,9 +62,12 @@ docker build -q --build-arg "K3S_VERSION=$K3S_VERSION" -t "$IMAGE" "$HERE" >/dev
 ssh-keygen -q -t ed25519 -N '' -C k3s-sa-test -f "$TMP/id_test"
 ssh-keygen -q -t ed25519 -N '' -C k3s-sa-colleague -f "$TMP/id_colleague"
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+# Как у провайдера: root только с паролем, ключа нет — prepare заходит по
+# паролю (BOOTSTRAP_PASSWORD) и сам кладёт root-у ключ.
+ROOT_PASSWORD=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
 docker run -d --name "$CONTAINER" --privileged --tmpfs /run --tmpfs /var/run \
   -p "127.0.0.1:$SSH_PORT:22" -p "127.0.0.1:$API_PORT:6443" \
-  -e "ROOT_AUTHORIZED_KEY=$(cat "$TMP/id_test.pub")" "$IMAGE" >/dev/null
+  -e "ROOT_PASSWORD=$ROOT_PASSWORD" "$IMAGE" >/dev/null
 
 cat > "$TMP/test.env" <<ENV
 SSH_HOST=127.0.0.1
@@ -75,6 +78,7 @@ SSH_PUBKEY=$TMP/id_test.pub
 SSH_EXTRA_PUBKEYS=$TMP/id_colleague.pub
 SSH_EXTRA_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 BOOTSTRAP_USER=root
+BOOTSTRAP_PASSWORD=$ROOT_PASSWORD
 SERVER_TIMEZONE=Asia/Almaty
 K3S_ROLE=server
 K3S_TLS_SAN=127.0.0.1,localhost
@@ -90,13 +94,16 @@ ENV
 
 echo "--- жду sshd ---"
 for _ in $(seq 1 30); do
-  tssh root@127.0.0.1 true 2>/dev/null && break
+  nc -z 127.0.0.1 "$SSH_PORT" 2>/dev/null && break
   sleep 1
 done
-tssh root@127.0.0.1 true || fail "sshd в контейнере не поднялся"
+nc -z 127.0.0.1 "$SSH_PORT" || fail "sshd в контейнере не поднялся"
+check "до prepare root по ключу не пускает (ключа у него нет)" \
+  test "$(tssh root@127.0.0.1 true >/dev/null 2>&1; echo $?)" != 0
 
-echo "--- k3sctl prepare ---"
+echo "--- k3sctl prepare (первый вход по паролю root) ---"
 "$K3SCTL" prepare "$TMP/test.env"
+check "после prepare root заходит по ключу (prepare положил его)" tssh root@127.0.0.1 true
 check "пользователь user входит по ключу и имеет sudo без пароля" \
   test "$(tssh user@127.0.0.1 'sudo -n id -u')" = 0
 check "дополнительный ключ коллеги тоже заходит" \
@@ -112,7 +119,8 @@ case "$out" in
   *"Permission denied (publickey)"*) pass "вход по паролю отключён (sshd предлагает только publickey)" ;;
   *) fail "вход по паролю не отключён, sshd ответил: $out" ;;
 esac
-check "повторный k3sctl prepare проходит" "$K3SCTL" prepare "$TMP/test.env"
+sed -e 's/^BOOTSTRAP_PASSWORD=.*/BOOTSTRAP_PASSWORD=/' "$TMP/test.env" > "$TMP/test-nopw.env"
+check "повторный k3sctl prepare проходит без пароля (user и root уже по ключу)" "$K3SCTL" prepare "$TMP/test-nopw.env"
 check "после повторного prepare ключи не задвоились" test "$(tssh user@127.0.0.1 'wc -l < ~/.ssh/authorized_keys')" = 2
 check "k3sctl cloud-init записывает файл рядом с настройками" "$K3SCTL" cloud-init "$TMP/test.env"
 check "файл test.cloud-init.yaml появился" test -f "$TMP/test.cloud-init.yaml"
