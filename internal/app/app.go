@@ -26,6 +26,7 @@ const usageText = `k3sctl — новый сервер с k3s: подготови
   k3sctl prepare zeon       ...или подготовить уже созданный сервер по SSH (под root)
   k3sctl install zeon       поставить k3s (K3S_ROLE в файле: server или agent)
   k3sctl access zeon        завести учётку и записать контекст в ~/.kube/config
+  k3sctl setup zeon         всё разом: prepare, install и access (access — только для server)
 
 Ещё:
 
@@ -82,6 +83,8 @@ func Run(args []string) int {
 		err = withConfig(arg, func(c *config.Config) error { return command.Install(ctx, c) })
 	case "access":
 		err = withConfig(arg, func(c *config.Config) error { return command.Access(ctx, c) })
+	case "setup":
+		err = withConfig(arg, func(c *config.Config) error { return command.Setup(ctx, c) })
 	case "version":
 		fmt.Printf("k3sctl %s", constant.Version)
 		if constant.Commit != "" {

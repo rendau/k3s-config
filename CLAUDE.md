@@ -1,7 +1,7 @@
 # k3sctl (k3s-config)
 
 Go-программа для нового сервера с k3s:
-`k3sctl init | cloud-init | prepare | install | access | list <сервер>`.
+`k3sctl init | cloud-init | prepare | install | access | setup | list <сервер>`.
 Аргумент команды — имя сервера (файл `servers/<имя>.env` относительно
 текущего каталога; папка `servers/` в `.gitignore`) или путь к файлу; разбор
 в `config.Resolve`.
@@ -53,6 +53,8 @@ Go-программа для нового сервера с k3s:
   установщик этого не делает, и новый `config.yaml` не применяется.
 - `access` — доступ через ServiceAccount, админский `k3s.yaml` на локальную
   машину не попадает.
+- `setup` — `Prepare` + `Install` + `Access` (последний только для
+  `K3S_ROLE=server`), `command.Setup`.
 
 ## Устройство
 

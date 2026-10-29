@@ -22,6 +22,7 @@ k3sctl cloud-init zeon    # 2а. записать servers/zeon.cloud-init.yaml �
 k3sctl prepare zeon       # 2б. ...или подготовить уже созданный сервер по SSH (под root)
 k3sctl install zeon       # 3. поставить k3s (K3S_ROLE в файле: server или agent)
 k3sctl access zeon        # 4. завести учётку и записать контекст в ~/.kube/config
+k3sctl setup zeon         # шаги 2б, 3 и 4 одной командой (access — только для server)
 k3sctl list               # какие серверы заведены (папка servers/)
 ```
 
@@ -116,6 +117,10 @@ Master (`K3S_ROLE=server`): туда же адреса из `K3S_TLS_SAN` (по 
 `CONTEXT_NAME` в `LOCAL_KUBECONFIG`. Другие контексты не трогает. В конце
 подключается к кластеру и печатает, под кем вошли. Повторный запуск
 безопасен: учётка та же, токен обновляется.
+
+**setup** выполняет `prepare`, `install` и `access` подряд; для роли
+`agent` шаг `access` пропускается. Каждый шаг повторяем, поэтому после
+ошибки достаточно устранить причину и запустить `setup` ещё раз.
 
 Проверка:
 
