@@ -71,7 +71,9 @@ func (t Target) RunScript(ctx context.Context, script string, asRoot bool) (stri
 	if asRoot {
 		runner = `if [ "$(id -u)" = 0 ]; then sh "$f"; else sudo -n sh "$f"; fi`
 	}
-	remote := fmt.Sprintf(`f=$(mktemp) && cat >"$f" && { %s; }; rc=$?; rm -f "$f"; exit $rc`, runner)
+	// LC_ALL=C.UTF-8: клиентский ssh (macOS) передаёт серверу свои LANG/LC_*,
+	// которых там обычно нет, и apt/perl засыпают вывод предупреждениями о локали.
+	remote := fmt.Sprintf(`export LC_ALL=C.UTF-8 LANG=C.UTF-8; f=$(mktemp) && cat >"$f" && { %s; }; rc=$?; rm -f "$f"; exit $rc`, runner)
 
 	cmd := exec.CommandContext(ctx, "ssh", append(t.args(), remote)...)
 	cmd.Stdin = strings.NewReader(script)

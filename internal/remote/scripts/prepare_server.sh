@@ -125,6 +125,10 @@ PubkeyAuthentication yes"
     printf 'ssh_pwauth: false\ndisable_root: true\n' > /etc/cloud/cloud.cfg.d/99-no-password.cfg
   fi
   sshd_bin=$(command -v sshd || echo /usr/sbin/sshd)
+  # На Debian/Ubuntu sshd -t требует каталог привилегий /run/sshd; systemd
+  # удаляет его при остановке службы (например, пока apt обновлял openssh),
+  # поэтому перед проверкой создаём сами.
+  mkdir -p /run/sshd
   "$sshd_bin" -t || die "конфиг sshd не прошёл проверку, перезапуск отменён"
   if command -v systemctl >/dev/null 2>&1 && systemctl restart ssh 2>/dev/null; then :
   elif command -v systemctl >/dev/null 2>&1 && systemctl restart sshd 2>/dev/null; then :
