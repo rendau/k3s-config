@@ -3,7 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
-	"io"
+	"os"
 	"strconv"
 
 	"github.com/rendau/k3s_config_merge/internal/config"
@@ -11,9 +11,10 @@ import (
 	"github.com/rendau/k3s_config_merge/internal/ui"
 )
 
-// CloudInit печатает в out user-data для cloud-init: та же подготовка
+// CloudInit записывает в файл path user-data для cloud-init: та же подготовка
 // сервера, что делает Prepare, но силами провайдера при создании виртуалки.
-func CloudInit(c *config.Config, out io.Writer) error {
+// Существующий файл перезаписывает — он целиком выводится из настроек.
+func CloudInit(c *config.Config, path string) error {
 	if c.SSHUser == "" {
 		return config.Missing("SSH_USER")
 	}
@@ -30,9 +31,13 @@ func CloudInit(c *config.Config, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(out, text)
+	if err = os.WriteFile(path, []byte(text), 0o600); err != nil {
+		return fmt.Errorf("запись %s: %w", path, err)
+	}
+	ui.Info("записан %s", path)
+	ui.Info("вставьте его содержимое в поле user-data (cloud-init) при создании виртуалки целиком: первой строкой должна быть «#cloud-config», иначе cloud-init пропустит весь файл")
 
-	return err
+	return nil
 }
 
 // Prepare готовит свежий сервер: пользователь с sudo и ключом, запрет

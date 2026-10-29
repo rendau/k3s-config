@@ -19,7 +19,8 @@ const usageText = `k3sctl — новый сервер с k3s: подготови
 Порядок для нового сервера (здесь он назван zeon):
 
   k3sctl init zeon          завести сервер: создаёт servers/zeon.env, его нужно заполнить
-  k3sctl cloud-init zeon    напечатать user-data для поля cloud-init при создании виртуалки
+  k3sctl cloud-init zeon    записать servers/zeon.cloud-init.yaml: user-data для поля
+                            cloud-init при создании виртуалки
   k3sctl prepare zeon       ...или подготовить уже созданный сервер по SSH (под root)
   k3sctl install zeon       поставить k3s (K3S_ROLE в файле: server или agent)
   k3sctl access zeon        завести учётку и записать контекст в ~/.kube/config
@@ -62,7 +63,7 @@ func Run(args []string) int {
 	case "list":
 		err = runList()
 	case "cloud-init":
-		err = withConfig(arg, func(c *config.Config) error { return command.CloudInit(c, os.Stdout) })
+		err = withConfig(arg, func(c *config.Config) error { return command.CloudInit(c, config.CloudInitPath(arg)) })
 	case "prepare":
 		err = withConfig(arg, func(c *config.Config) error { return command.Prepare(ctx, c) })
 	case "install":
@@ -124,7 +125,7 @@ func runInit(name string) error {
 	} else {
 		ui.Warn("ssh-ключ в ~/.ssh не найден (id_rsa, id_ed25519, id_ecdsa): впишите SSH_KEY и SSH_PUBKEY")
 	}
-	ui.Info("впишите SSH_HOST и дальше: k3sctl cloud-init %s (или prepare), install, access", name)
+	ui.Info("дальше: k3sctl cloud-init %s (или впишите SSH_HOST и k3sctl prepare), install, access", name)
 
 	return nil
 }

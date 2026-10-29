@@ -107,8 +107,11 @@ case "$out" in
   *) fail "вход по паролю не отключён, sshd ответил: $out" ;;
 esac
 check "повторный k3sctl prepare проходит" "$K3SCTL" prepare "$TMP/test.env"
-cloud_init=$("$K3SCTL" cloud-init "$TMP/test.env")
-check "cloud-init печатает user-data с пользователем" grep -q '^  - name: user$' <<<"$cloud_init"
+check "k3sctl cloud-init записывает файл рядом с настройками" "$K3SCTL" cloud-init "$TMP/test.env"
+check "файл test.cloud-init.yaml появился" test -f "$TMP/test.cloud-init.yaml"
+cloud_init=$(cat "$TMP/test.cloud-init.yaml")
+check "cloud-init начинается с #cloud-config" test "$(head -1 "$TMP/test.cloud-init.yaml")" = '#cloud-config'
+check "cloud-init содержит пользователя" grep -q '^  - name: user$' <<<"$cloud_init"
 check "cloud-init подставил ключ" grep -q 'ssh-ed25519 .* k3s-sa-test$' <<<"$cloud_init"
 check "cloud-init подставил часовой пояс" grep -q '^timezone: Asia/Almaty$' <<<"$cloud_init"
 

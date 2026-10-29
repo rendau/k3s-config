@@ -210,3 +210,8 @@ func TestInitListLoad(t *testing.T) {
 	_, err = Load("")
 	require.Error(t, err, "без имени сервера")
 }
+
+func TestCloudInitPath(t *testing.T) {
+	assert.Equal(t, filepath.Join("servers", "zeon.cloud-init.yaml"), CloudInitPath("zeon"))
+	assert.Equal(t, "/tmp/x/srv.cloud-init.yaml", CloudInitPath("/tmp/x/srv.env"))
+}

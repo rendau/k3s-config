@@ -1,7 +1,8 @@
 #cloud-config
-# user-data для нового сервера (Ubuntu/Debian). Напечатано командой
-#   k3sctl prepare --print-cloud-init
-# Содержимое вставляется в поле user-data при создании виртуалки.
+# user-data для нового сервера (Ubuntu/Debian), напечатано командой
+# k3sctl cloud-init <имя>. Вставляется в поле user-data (cloud-init)
+# при создании виртуалки ЦЕЛИКОМ: без первой строки «#cloud-config»
+# cloud-init молча пропустит весь файл.
 {{- if .Timezone }}
 timezone: {{ .Timezone }}
 {{- end }}

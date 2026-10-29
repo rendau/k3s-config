@@ -136,6 +136,14 @@ func serverName(path string) string {
 	return strings.TrimSuffix(filepath.Base(path), ext)
 }
 
+// CloudInitPath — куда писать user-data для сервера: рядом с файлом настроек,
+// servers/zeon.env → servers/zeon.cloud-init.yaml.
+func CloudInitPath(arg string) string {
+	path := Resolve(arg)
+
+	return filepath.Join(filepath.Dir(path), serverName(path)+".cloud-init.yaml")
+}
+
 // fillDerived заполняет то, что однозначно следует из уже заданного:
 // публичный ключ (SSH_KEY + .pub), имя контекста (имя сервера).
 // Это страховка для файлов, написанных вручную; init записывает всё явно.
