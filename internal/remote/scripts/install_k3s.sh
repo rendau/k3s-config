@@ -74,26 +74,38 @@ fi
   if [ -n "$K3S_LOG_MAX_FILES" ] && [ "$K3S_LOG_MAX_FILES" -gt 0 ]; then
     echo "  - container-log-max-files=$K3S_LOG_MAX_FILES"
   fi
-  # Штатная остановка подов при выключении ноды: kubelet перехватывает
-  # reboot/shutdown через systemd-logind и даёт подам завершиться. Поды
-  # никуда не переезжают — важно для StatefulSet с local-path томами.
-  if [ "$K3S_SHUTDOWN_GRACE" -gt 0 ]; then
-    echo "  - shutdown-grace-period=${K3S_SHUTDOWN_GRACE}s"
-    echo "  - shutdown-grace-period-critical-pods=${K3S_SHUTDOWN_GRACE_CRITICAL}s"
-  fi
 } > "$cfg"
 chmod 0600 "$cfg"
 log "записан $cfg"
 
-# logind по умолчанию даёт на задержку выключения 5 с; kubelet просит
-# столько, сколько указано в shutdown-grace-period, иначе урежет до лимита.
-if [ "$K3S_SHUTDOWN_GRACE" -gt 0 ] && command -v systemctl >/dev/null 2>&1; then
-  mkdir -p /etc/systemd/logind.conf.d
-  printf '[Login]\nInhibitDelayMaxSec=%s\n' "$K3S_SHUTDOWN_GRACE" > /etc/systemd/logind.conf.d/90-k3sctl.conf
-  systemctl kill -s HUP systemd-logind 2>/dev/null || true
-  log "штатная остановка подов при выключении: ${K3S_SHUTDOWN_GRACE}s (системные ${K3S_SHUTDOWN_GRACE_CRITICAL}s)"
-elif [ "$K3S_SHUTDOWN_GRACE" -gt 0 ]; then
-  warn "нет systemd — штатная остановка подов при выключении работать не будет"
+# Штатная остановка подов при выключении ноды: kubelet перехватывает
+# reboot/shutdown через systemd-logind и даёт подам завершиться. Поды
+# никуда не переезжают — важно для StatefulSet с local-path томами.
+# Флага у kubelet для этого нет, только файл конфигурации: k3s читает
+# drop-in файлы из agent/etc/kubelet.conf.d.
+kubelet_dropin=/var/lib/rancher/k3s/agent/etc/kubelet.conf.d/90-k3sctl.conf
+if [ "$K3S_SHUTDOWN_GRACE" -gt 0 ]; then
+  mkdir -p "$(dirname "$kubelet_dropin")"
+  cat > "$kubelet_dropin" <<KUBELET
+# Сгенерировано install_k3s.sh
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+shutdownGracePeriod: ${K3S_SHUTDOWN_GRACE}s
+shutdownGracePeriodCriticalPods: ${K3S_SHUTDOWN_GRACE_CRITICAL}s
+KUBELET
+  chmod 0600 "$kubelet_dropin"
+  # logind по умолчанию даёт на задержку выключения 5 с; kubelet просит
+  # столько, сколько в shutdownGracePeriod, иначе урежет до лимита.
+  if command -v systemctl >/dev/null 2>&1; then
+    mkdir -p /etc/systemd/logind.conf.d
+    printf '[Login]\nInhibitDelayMaxSec=%s\n' "$K3S_SHUTDOWN_GRACE" > /etc/systemd/logind.conf.d/90-k3sctl.conf
+    systemctl kill -s HUP systemd-logind 2>/dev/null || true
+    log "штатная остановка подов при выключении: ${K3S_SHUTDOWN_GRACE}s (системные ${K3S_SHUTDOWN_GRACE_CRITICAL}s)"
+  else
+    warn "нет systemd — штатная остановка подов при выключении работать не будет"
+  fi
+else
+  rm -f "$kubelet_dropin"
 fi
 
 # --- 3. официальный установщик ---
@@ -152,6 +164,18 @@ if [ "$K3S_ROLE" = server ]; then
         fi
         sleep 2
       done
+      # Падающий по кругу k3s отвечает на /readyz на секунду и снова гаснет:
+      # процесс службы должен остаться тем же и API ответить ещё раз.
+      if command -v systemctl >/dev/null 2>&1; then
+        pid1=$(systemctl show "$svc" -p ExecMainPID --value 2>/dev/null || echo 0)
+        sleep 8
+        pid2=$(systemctl show "$svc" -p ExecMainPID --value 2>/dev/null || echo 0)
+        if [ "$pid1" != "$pid2" ] || ! kubectl get --raw /readyz >/dev/null 2>&1; then
+          journalctl -u "$svc" --no-pager -n 300 2>/dev/null \
+            | grep -E "level=fatal|Shutdown request received|unknown flag" | tail -3 >&2 || true
+          die "служба $svc перезапускается — k3s не стартует, причина выше или в journalctl -u $svc"
+        fi
+      fi
       kubectl get nodes -o wide >&2 || true
       ;;
   esac

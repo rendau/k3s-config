@@ -44,11 +44,18 @@ Go-программа для нового сервера с k3s:
   (`K3S_SYSTEM_RESERVED`, пусто = скрипт считает по `/proc/meminfo` и
   `nproc`: 10 % памяти в 256Mi..2Gi, 100m на ядро до 1000m) и
   `eviction-hard` (`K3S_EVICTION_HARD`), `container-log-max-size/-files`
-  (`K3S_LOG_MAX_SIZE`, `K3S_LOG_MAX_FILES`), `shutdown-grace-period(-critical-pods)`
-  (`K3S_SHUTDOWN_GRACE`, `K3S_SHUTDOWN_GRACE_CRITICAL`, секунды, 0 = выкл;
-  плюс `InhibitDelayMaxSec` в `/etc/systemd/logind.conf.d/90-k3sctl.conf`,
-  иначе logind даёт только 5 с); `tls-san` и
-  `write-kubeconfig-mode` — только server. Если служба уже работала,
+  (`K3S_LOG_MAX_SIZE`, `K3S_LOG_MAX_FILES`); `tls-san` и
+  `write-kubeconfig-mode` — только server. Штатная остановка подов при
+  выключении (`K3S_SHUTDOWN_GRACE`, `K3S_SHUTDOWN_GRACE_CRITICAL`, секунды,
+  0 = выкл) — **не флаг** (у kubelet его нет, k3s падает по кругу с
+  «unknown flag»), а drop-in `KubeletConfiguration` в
+  `/var/lib/rancher/k3s/agent/etc/kubelet.conf.d/90-k3sctl.conf`
+  (`shutdownGracePeriod`, `shutdownGracePeriodCriticalPods`) плюс
+  `InhibitDelayMaxSec` в `/etc/systemd/logind.conf.d/90-k3sctl.conf`, иначе
+  logind даёт только 5 с. После ожидания `/readyz` скрипт 8 с ждёт и
+  сверяет `ExecMainPID` службы и `/readyz` ещё раз: падающий по кругу k3s
+  отвечает на секунду, и без этой проверки install «проходил»
+  (`NRestarts` не годится — накопительный). Если служба уже работала,
   скрипт после установщика перезапускает её сам: при той же версии
   установщик этого не делает, и новый `config.yaml` не применяется.
 - `access` — доступ через ServiceAccount, админский `k3s.yaml` на локальную
