@@ -76,6 +76,17 @@ chmod 0600 "$cfg"
 log "записан $cfg"
 
 # --- 3. официальный установщик ---
+# Если k3s уже работает, установщик при той же версии службу не перезапускает,
+# и новый config.yaml не применяется — перезапускаем сами после установки.
+svc=k3s
+[ "$K3S_ROLE" = agent ] && svc=k3s-agent
+was_active=false
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$svc" 2>/dev/null; then
+  was_active=true
+elif command -v rc-service >/dev/null 2>&1 && rc-service "$svc" status >/dev/null 2>&1; then
+  was_active=true
+fi
+
 log "запускаю установщик k3s: роль $K3S_ROLE, версия ${K3S_VERSION:-последняя стабильная}"
 installer=$(mktemp)
 curl -sfL https://get.k3s.io -o "$installer" || die "не скачался установщик с https://get.k3s.io"
@@ -87,6 +98,15 @@ else
     $K3S_INSTALL_ENV sh "$installer" agent $K3S_EXTRA_ARGS
 fi
 rm -f "$installer"
+
+if [ "$was_active" = true ]; then
+  log "k3s уже работал — перезапускаю службу $svc, чтобы применить config.yaml"
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl restart "$svc"
+  else
+    rc-service "$svc" restart >/dev/null
+  fi
+fi
 
 # --- 4. sudo на kubectl для SSH_USER (только server) ---
 if [ "$K3S_ROLE" = server ] && [ "$SSH_USER" != root ]; then

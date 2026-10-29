@@ -32,7 +32,9 @@ Go-программа для нового сервера с k3s:
   `nproc`: 10 % памяти в 256Mi..2Gi, 100m на ядро до 1000m) и
   `eviction-hard` (`K3S_EVICTION_HARD`), `container-log-max-size/-files`
   (`K3S_LOG_MAX_SIZE`, `K3S_LOG_MAX_FILES`); `tls-san` и
-  `write-kubeconfig-mode` — только server.
+  `write-kubeconfig-mode` — только server. Если служба уже работала,
+  скрипт после установщика перезапускает её сам: при той же версии
+  установщик этого не делает, и новый `config.yaml` не применяется.
 - `access` — доступ через ServiceAccount, админский `k3s.yaml` на локальную
   машину не попадает.
 
