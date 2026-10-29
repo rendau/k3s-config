@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/samber/lo"
+
 	"github.com/rendau/k3s_config_merge/internal/config"
 	"github.com/rendau/k3s_config_merge/internal/sshx"
 	"github.com/rendau/k3s_config_merge/internal/util"
@@ -23,13 +25,41 @@ func target(c *config.Config, user string) sshx.Target {
 	}
 }
 
-// loadPubkey читает публичный ключ из SSH_PUBKEY (init записывает его в файл сервера,
-// для файлов вручную config подставляет SSH_KEY + ".pub").
-func loadPubkey(c *config.Config) (string, error) {
+// loadPubkeys возвращает публичные ключи, которые кладутся пользователю на
+// сервер: основной из SSH_PUBKEY (init записывает его в файл сервера, для
+// файлов вручную config подставляет SSH_KEY + ".pub") и дополнительные из
+// SSH_EXTRA_PUBKEYS — через запятую, путь к файлу или сам ключ строкой.
+// Повторы убираются, порядок сохраняется.
+func loadPubkeys(c *config.Config) ([]string, error) {
 	if c.SSHPubkey == "" {
-		return "", config.Missing("SSH_KEY / SSH_PUBKEY")
+		return nil, config.Missing("SSH_KEY / SSH_PUBKEY")
 	}
-	path := util.ExpandHome(c.SSHPubkey)
+
+	keys := []string{c.SSHPubkey}
+	for _, item := range strings.Split(c.SSHExtraPubkeys, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			keys = append(keys, item)
+		}
+	}
+
+	result := make([]string, 0, len(keys))
+	for _, item := range keys {
+		key, err := loadPubkey(item)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, key)
+	}
+
+	return lo.Uniq(result), nil
+}
+
+// loadPubkey — публичный ключ из строки: либо сам ключ, либо путь к файлу с ним.
+func loadPubkey(item string) (string, error) {
+	if isPubkey(item) {
+		return item, nil
+	}
+	path := util.ExpandHome(item)
 
 	f, err := os.Open(path)
 	if err != nil {

@@ -34,12 +34,14 @@ const (
 
 type Config struct {
 	// SSH до сервера
-	SSHHost      string `env:"SSH_HOST"`
-	SSHPort      int    `env:"SSH_PORT" envDefault:"22"`
-	SSHUser      string `env:"SSH_USER" envDefault:"user"`
-	SSHKey       string `env:"SSH_KEY"`
-	SSHPubkey    string `env:"SSH_PUBKEY"`
-	SSHExtraOpts string `env:"SSH_EXTRA_OPTS"`
+	SSHHost   string `env:"SSH_HOST"`
+	SSHPort   int    `env:"SSH_PORT" envDefault:"22"`
+	SSHUser   string `env:"SSH_USER" envDefault:"user"`
+	SSHKey    string `env:"SSH_KEY"`
+	SSHPubkey string `env:"SSH_PUBKEY"`
+	// SSHExtraPubkeys — дополнительные публичные ключи через запятую (путь к файлу или сам ключ).
+	SSHExtraPubkeys string `env:"SSH_EXTRA_PUBKEYS"`
+	SSHExtraOpts    string `env:"SSH_EXTRA_OPTS"`
 
 	// prepare: подготовка свежего сервера
 	BootstrapUser          string `env:"BOOTSTRAP_USER" envDefault:"root"`

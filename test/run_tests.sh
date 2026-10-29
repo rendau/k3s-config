@@ -60,6 +60,7 @@ echo "--- сборка образа $IMAGE (k3s $K3S_VERSION) ---"
 docker build -q --build-arg "K3S_VERSION=$K3S_VERSION" -t "$IMAGE" "$HERE" >/dev/null
 
 ssh-keygen -q -t ed25519 -N '' -C k3s-sa-test -f "$TMP/id_test"
+ssh-keygen -q -t ed25519 -N '' -C k3s-sa-colleague -f "$TMP/id_colleague"
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 docker run -d --name "$CONTAINER" --privileged --tmpfs /run --tmpfs /var/run \
   -p "127.0.0.1:$SSH_PORT:22" -p "127.0.0.1:$API_PORT:6443" \
@@ -71,6 +72,7 @@ SSH_PORT=$SSH_PORT
 SSH_USER=user
 SSH_KEY=$TMP/id_test
 SSH_PUBKEY=$TMP/id_test.pub
+SSH_EXTRA_PUBKEYS=$TMP/id_colleague.pub
 SSH_EXTRA_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 BOOTSTRAP_USER=root
 SERVER_TIMEZONE=Asia/Almaty
@@ -97,6 +99,9 @@ echo "--- k3sctl prepare ---"
 "$K3SCTL" prepare "$TMP/test.env"
 check "пользователь user входит по ключу и имеет sudo без пароля" \
   test "$(tssh user@127.0.0.1 'sudo -n id -u')" = 0
+check "дополнительный ключ коллеги тоже заходит" \
+  test "$(ssh -p "$SSH_PORT" -i "$TMP/id_colleague" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR user@127.0.0.1 'id -un')" = user
+check "в authorized_keys ровно два ключа" test "$(tssh user@127.0.0.1 'wc -l < ~/.ssh/authorized_keys')" = 2
 check "bash-completion установлен" tssh user@127.0.0.1 'test -f /usr/share/bash-completion/bash_completion'
 check "sysctl для inotify записан" tssh root@127.0.0.1 'grep -q max_user_watches /etc/sysctl.d/90-k3s.conf'
 check "часовой пояс Asia/Almaty" tssh root@127.0.0.1 'readlink /etc/localtime | grep -q Asia/Almaty'
@@ -108,6 +113,7 @@ case "$out" in
   *) fail "вход по паролю не отключён, sshd ответил: $out" ;;
 esac
 check "повторный k3sctl prepare проходит" "$K3SCTL" prepare "$TMP/test.env"
+check "после повторного prepare ключи не задвоились" test "$(tssh user@127.0.0.1 'wc -l < ~/.ssh/authorized_keys')" = 2
 check "k3sctl cloud-init записывает файл рядом с настройками" "$K3SCTL" cloud-init "$TMP/test.env"
 check "файл test.cloud-init.yaml появился" test -f "$TMP/test.cloud-init.yaml"
 cloud_init=$(cat "$TMP/test.cloud-init.yaml")
@@ -115,6 +121,7 @@ check "cloud-init начинается с #cloud-config" test "$(head -1 "$TMP/t
 check "cloud-init содержит пользователя" grep -q '^  - name: user$' <<<"$cloud_init"
 check "cloud-init содержит перезагрузку по расписанию" grep -q 'k3sctl-reboot' <<<"$cloud_init"
 check "cloud-init подставил ключ" grep -q 'ssh-ed25519 .* k3s-sa-test$' <<<"$cloud_init"
+check "cloud-init подставил ключ коллеги" grep -q 'ssh-ed25519 .* k3s-sa-colleague$' <<<"$cloud_init"
 check "cloud-init подставил часовой пояс" grep -q '^timezone: Asia/Almaty$' <<<"$cloud_init"
 
 echo "--- k3sctl install ---"

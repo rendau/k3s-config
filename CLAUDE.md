@@ -21,7 +21,9 @@ Go-программа для нового сервера с k3s:
 - `cloud-init` — записать user-data по шаблону в `servers/<имя>.cloud-init.yaml`
   (путь считает `config.CloudInitPath`, рядом с файлом настроек).
 - `prepare` — подготовка свежего сервера по SSH под `BOOTSTRAP_USER` (root):
-  пользователь, ключ, запрет паролей, пакеты, sysctl, часовой пояс,
+  пользователь, ключи (`SSH_PUBKEY` + `SSH_EXTRA_PUBKEYS` через запятую,
+  путь или ключ строкой; `command.loadPubkeys`, в скрипт уходят по одному
+  на строку в `SSH_PUBKEY_CONTENT`), запрет паролей, пакеты, sysctl, часовой пояс,
   `/etc/cron.d/k3sctl-reboot` (перезагрузка по `PREPARE_REBOOT_CRON`, если
   есть `/var/run/reboot-required`; на Alpine нет `/etc/cron.d` — пропуск),
   `/etc/systemd/journald.conf.d/90-k3sctl.conf` (`SystemMaxUse` из

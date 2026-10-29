@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/rendau/k3s_config_merge/internal/config"
 	"github.com/rendau/k3s_config_merge/internal/remote"
@@ -18,14 +19,14 @@ func CloudInit(c *config.Config, path string) error {
 	if c.SSHUser == "" {
 		return config.Missing("SSH_USER")
 	}
-	pubkey, err := loadPubkey(c)
+	pubkeys, err := loadPubkeys(c)
 	if err != nil {
 		return err
 	}
 
 	text, err := remote.CloudInit(remote.CloudInitParams{
 		SSHUser:       c.SSHUser,
-		SSHPubkey:     pubkey,
+		SSHPubkeys:    pubkeys,
 		Timezone:      c.ServerTimezone,
 		RebootCron:    c.PrepareRebootCron,
 		JournalMaxUse: c.JournalMaxUse,
@@ -51,14 +52,14 @@ func Prepare(ctx context.Context, c *config.Config) error {
 	if c.SSHUser == "" {
 		return config.Missing("SSH_USER")
 	}
-	pubkey, err := loadPubkey(c)
+	pubkeys, err := loadPubkeys(c)
 	if err != nil {
 		return err
 	}
 
 	script, err := remote.Script(remote.ScriptPrepareServer, map[string]string{
 		"SSH_USER":                 c.SSHUser,
-		"SSH_PUBKEY_CONTENT":       pubkey,
+		"SSH_PUBKEY_CONTENT":       strings.Join(pubkeys, "\n"),
 		"PREPARE_UPGRADE":          strconv.FormatBool(c.PrepareUpgrade),
 		"PREPARE_DISABLE_PASSWORD": strconv.FormatBool(c.PrepareDisablePassword),
 		"SERVER_TIMEZONE":          c.ServerTimezone,

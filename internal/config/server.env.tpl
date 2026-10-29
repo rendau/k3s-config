@@ -14,6 +14,10 @@ SSH_USER={{.SSHUser}}
 # ~/.ssh/id_rsa, id_ed25519, id_ecdsa (пусто = не нашёл, впишите свой)
 SSH_KEY={{.SSHKey}}
 SSH_PUBKEY={{.SSHPubkey}}
+# дополнительные публичные ключи (коллеги, запасной) через запятую: путь
+# к файлу или сам ключ строкой; prepare и cloud-init кладут их пользователю
+# вместе с основным, напр. ~/.ssh/backup.pub,ssh-ed25519 AAAA... kolya
+SSH_EXTRA_PUBKEYS=
 # дополнительные опции ssh, напр. -o ProxyJump=bastion
 SSH_EXTRA_OPTS=
 

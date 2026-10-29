@@ -13,7 +13,9 @@ users:
     sudo: "ALL=(ALL) NOPASSWD:ALL"
     lock_passwd: true
     ssh_authorized_keys:
-      - {{ .SSHPubkey }}
+{{- range .SSHPubkeys }}
+      - {{ . }}
+{{- end }}
 ssh_pwauth: false
 disable_root: true
 package_update: true

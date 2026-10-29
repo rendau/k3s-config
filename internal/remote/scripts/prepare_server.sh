@@ -1,5 +1,6 @@
 # Серверная часть prepare_server.sh. Выполняется от root, POSIX sh.
-# Переменные ставит в начало локальный скрипт: SSH_USER, SSH_PUBKEY_CONTENT,
+# Переменные ставит в начало локальный скрипт: SSH_USER, SSH_PUBKEY_CONTENT
+# (публичные ключи, по одному на строку),
 # PREPARE_UPGRADE, PREPARE_DISABLE_PASSWORD, SERVER_TIMEZONE, PREPARE_REBOOT_CRON,
 # JOURNAL_MAX_USE.
 set -eu
@@ -74,12 +75,15 @@ home=$(getent passwd "$SSH_USER" | cut -d: -f6)
 [ -n "$home" ] || die "не нашёл домашний каталог $SSH_USER"
 mkdir -p "$home/.ssh"
 touch "$home/.ssh/authorized_keys"
-if grep -qxF "$SSH_PUBKEY_CONTENT" "$home/.ssh/authorized_keys"; then
-  log "ключ уже в authorized_keys"
-else
-  printf '%s\n' "$SSH_PUBKEY_CONTENT" >> "$home/.ssh/authorized_keys"
-  log "ключ добавлен в authorized_keys"
-fi
+printf '%s\n' "$SSH_PUBKEY_CONTENT" | while IFS= read -r key; do
+  [ -n "$key" ] || continue
+  if grep -qxF "$key" "$home/.ssh/authorized_keys"; then
+    log "ключ уже в authorized_keys: ${key##* }"
+  else
+    printf '%s\n' "$key" >> "$home/.ssh/authorized_keys"
+    log "ключ добавлен в authorized_keys: ${key##* }"
+  fi
+done
 chmod 700 "$home/.ssh"
 chmod 600 "$home/.ssh/authorized_keys"
 chown -R "$SSH_USER:" "$home/.ssh"
