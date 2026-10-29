@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/rendau/k3s_config_merge/internal/app"
+	"github.com/rendau/k3s-config/internal/app"
 )
 
 func main() {

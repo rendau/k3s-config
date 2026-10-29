@@ -1,4 +1,4 @@
-# k3sctl (k3s_config_merge)
+# k3sctl (k3s-config)
 
 Go-программа для нового сервера с k3s:
 `k3sctl init | cloud-init | prepare | install | access | list <сервер>`.

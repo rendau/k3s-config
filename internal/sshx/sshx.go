@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/rendau/k3s_config_merge/internal/util"
+	"github.com/rendau/k3s-config/internal/util"
 )
 
 // Target — куда и под кем подключаться.

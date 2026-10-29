@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/rendau/k3s_config_merge/internal/config"
-	"github.com/rendau/k3s_config_merge/internal/remote"
-	"github.com/rendau/k3s_config_merge/internal/sshx"
-	"github.com/rendau/k3s_config_merge/internal/ui"
+	"github.com/rendau/k3s-config/internal/config"
+	"github.com/rendau/k3s-config/internal/remote"
+	"github.com/rendau/k3s-config/internal/sshx"
+	"github.com/rendau/k3s-config/internal/ui"
 )
 
 const nodeTokenPath = "/var/lib/rancher/k3s/server/node-token"

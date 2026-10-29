@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rendau/k3s_config_merge/internal/httpx"
+	"github.com/rendau/k3s-config/internal/httpx"
 )
 
 // ChannelURL — канал stable: отвечает перенаправлением на страницу релиза,

@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/rendau/k3s_config_merge/internal/config"
-	"github.com/rendau/k3s_config_merge/internal/kubecfg"
-	"github.com/rendau/k3s_config_merge/internal/remote"
-	"github.com/rendau/k3s_config_merge/internal/ui"
+	"github.com/rendau/k3s-config/internal/config"
+	"github.com/rendau/k3s-config/internal/kubecfg"
+	"github.com/rendau/k3s-config/internal/remote"
+	"github.com/rendau/k3s-config/internal/ui"
 )
 
 // Access заводит в кластере ServiceAccount с ролью, получает токен и

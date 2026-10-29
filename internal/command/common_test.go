@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/rendau/k3s_config_merge/internal/config"
+	"github.com/rendau/k3s-config/internal/config"
 )
 
 func TestLoadPubkeys(t *testing.T) {

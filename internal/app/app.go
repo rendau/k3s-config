@@ -8,11 +8,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/rendau/k3s_config_merge/internal/command"
-	"github.com/rendau/k3s_config_merge/internal/config"
-	"github.com/rendau/k3s_config_merge/internal/constant"
-	"github.com/rendau/k3s_config_merge/internal/k3s"
-	"github.com/rendau/k3s_config_merge/internal/ui"
+	"github.com/rendau/k3s-config/internal/command"
+	"github.com/rendau/k3s-config/internal/config"
+	"github.com/rendau/k3s-config/internal/constant"
+	"github.com/rendau/k3s-config/internal/k3s"
+	"github.com/rendau/k3s-config/internal/ui"
 )
 
 const usageText = `k3sctl — новый сервер с k3s: подготовить, поставить k3s, получить доступ.

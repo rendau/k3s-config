@@ -14,7 +14,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
-	"github.com/rendau/k3s_config_merge/internal/util"
+	"github.com/rendau/k3s-config/internal/util"
 )
 
 // Entry — что записать в kubeconfig: кластер, пользователь и контекст.

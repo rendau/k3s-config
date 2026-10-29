@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/rendau/k3s_config_merge/internal/config"
-	"github.com/rendau/k3s_config_merge/internal/remote"
-	"github.com/rendau/k3s_config_merge/internal/ui"
+	"github.com/rendau/k3s-config/internal/config"
+	"github.com/rendau/k3s-config/internal/remote"
+	"github.com/rendau/k3s-config/internal/ui"
 )
 
 // CloudInit записывает в файл path user-data для cloud-init: та же подготовка

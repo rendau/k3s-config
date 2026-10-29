@@ -1,4 +1,4 @@
-module github.com/rendau/k3s_config_merge
+module github.com/rendau/k3s-config
 
 go 1.27
 
