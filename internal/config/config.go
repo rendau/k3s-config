@@ -67,11 +67,16 @@ type Config struct {
 	K3sEvictionHard   string `env:"K3S_EVICTION_HARD" envDefault:"memory.available<5%,nodefs.available<10%,imagefs.available<10%"`
 	K3sLogMaxSize     string `env:"K3S_LOG_MAX_SIZE" envDefault:"10Mi"`
 	K3sLogMaxFiles    int    `env:"K3S_LOG_MAX_FILES" envDefault:"3"`
-	K3sServerSSHHost  string `env:"K3S_SERVER_SSH_HOST"`
-	K3sServerSSHPort  int    `env:"K3S_SERVER_SSH_PORT" envDefault:"22"`
-	K3sServerSSHUser  string `env:"K3S_SERVER_SSH_USER"`
-	K3sServerURL      string `env:"K3S_SERVER_URL"`
-	K3sToken          string `env:"K3S_TOKEN"`
+	// K3sShutdownGrace — секунды на штатную остановку подов при выключении
+	// ноды (graceful node shutdown), 0 = выключено; Critical — из них для
+	// системных подов.
+	K3sShutdownGrace         int    `env:"K3S_SHUTDOWN_GRACE" envDefault:"60"`
+	K3sShutdownGraceCritical int    `env:"K3S_SHUTDOWN_GRACE_CRITICAL" envDefault:"20"`
+	K3sServerSSHHost         string `env:"K3S_SERVER_SSH_HOST"`
+	K3sServerSSHPort         int    `env:"K3S_SERVER_SSH_PORT" envDefault:"22"`
+	K3sServerSSHUser         string `env:"K3S_SERVER_SSH_USER"`
+	K3sServerURL             string `env:"K3S_SERVER_URL"`
+	K3sToken                 string `env:"K3S_TOKEN"`
 
 	// access: доступ через ServiceAccount
 	APIURL            string `env:"API_URL"`

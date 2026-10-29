@@ -137,6 +137,7 @@ echo "--- k3sctl install ---"
 check "config.yaml с tls-san записан" tssh root@127.0.0.1 'grep -q "^  - localhost" /etc/rancher/k3s/config.yaml'
 check "config.yaml с запасом ресурсов для системы" tssh root@127.0.0.1 'grep -Eq "^  - system-reserved=cpu=[0-9]+m,memory=[0-9]+Mi$" /etc/rancher/k3s/config.yaml'
 check "config.yaml с порогом выселения" tssh root@127.0.0.1 'grep -q "^  - eviction-hard=memory.available<5%" /etc/rancher/k3s/config.yaml'
+check "config.yaml со штатной остановкой подов при выключении" tssh root@127.0.0.1 'grep -q "^  - shutdown-grace-period=60s" /etc/rancher/k3s/config.yaml && grep -q "^  - shutdown-grace-period-critical-pods=20s" /etc/rancher/k3s/config.yaml'
 check "config.yaml с лимитом логов контейнеров" tssh root@127.0.0.1 'grep -q "^  - container-log-max-size=10Mi" /etc/rancher/k3s/config.yaml && grep -q "^  - container-log-max-files=3" /etc/rancher/k3s/config.yaml'
 check "установщик создал службу k3s" tssh root@127.0.0.1 'test -f /etc/init.d/k3s'
 check "kubectl установлен" tssh root@127.0.0.1 'test -L /usr/local/bin/kubectl'

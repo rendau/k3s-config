@@ -23,6 +23,10 @@ func Install(ctx context.Context, c *config.Config) error {
 	if c.SSHUser == "" {
 		return config.Missing("SSH_USER")
 	}
+	if c.K3sShutdownGrace < 0 || c.K3sShutdownGraceCritical < 0 || c.K3sShutdownGraceCritical > c.K3sShutdownGrace {
+		return fmt.Errorf("K3S_SHUTDOWN_GRACE_CRITICAL (%d) должен быть от 0 до K3S_SHUTDOWN_GRACE (%d)",
+			c.K3sShutdownGraceCritical, c.K3sShutdownGrace)
+	}
 
 	serverURL, token, tlsSan := "", "", ""
 
@@ -55,6 +59,9 @@ func Install(ctx context.Context, c *config.Config) error {
 		"K3S_EVICTION_HARD":   c.K3sEvictionHard,
 		"K3S_LOG_MAX_SIZE":    c.K3sLogMaxSize,
 		"K3S_LOG_MAX_FILES":   strconv.Itoa(c.K3sLogMaxFiles),
+
+		"K3S_SHUTDOWN_GRACE":          strconv.Itoa(c.K3sShutdownGrace),
+		"K3S_SHUTDOWN_GRACE_CRITICAL": strconv.Itoa(c.K3sShutdownGraceCritical),
 	})
 	if err != nil {
 		return err

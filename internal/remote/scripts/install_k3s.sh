@@ -1,7 +1,8 @@
 # Серверная часть install_k3s.sh. Выполняется от root, POSIX sh.
 # Переменные ставит в начало локальный скрипт: K3S_ROLE, SSH_USER, K3S_VERSION,
 # K3S_TLS_SAN, K3S_EXTRA_ARGS, K3S_INSTALL_ENV, K3S_SERVER_URL, K3S_TOKEN,
-# K3S_SYSTEM_RESERVED, K3S_EVICTION_HARD, K3S_LOG_MAX_SIZE, K3S_LOG_MAX_FILES.
+# K3S_SYSTEM_RESERVED, K3S_EVICTION_HARD, K3S_LOG_MAX_SIZE, K3S_LOG_MAX_FILES,
+# K3S_SHUTDOWN_GRACE, K3S_SHUTDOWN_GRACE_CRITICAL (секунды, 0 = выключено).
 set -eu
 
 log()  { printf '  [сервер] %s\n' "$*" >&2; }
@@ -20,6 +21,8 @@ K3S_SYSTEM_RESERVED=${K3S_SYSTEM_RESERVED:-}
 K3S_EVICTION_HARD=${K3S_EVICTION_HARD:-}
 K3S_LOG_MAX_SIZE=${K3S_LOG_MAX_SIZE:-}
 K3S_LOG_MAX_FILES=${K3S_LOG_MAX_FILES:-}
+K3S_SHUTDOWN_GRACE=${K3S_SHUTDOWN_GRACE:-0}
+K3S_SHUTDOWN_GRACE_CRITICAL=${K3S_SHUTDOWN_GRACE_CRITICAL:-0}
 command -v curl >/dev/null 2>&1 || die "на сервере нужен curl"
 
 # --- 1. запас ресурсов для системы ---
@@ -71,9 +74,27 @@ fi
   if [ -n "$K3S_LOG_MAX_FILES" ] && [ "$K3S_LOG_MAX_FILES" -gt 0 ]; then
     echo "  - container-log-max-files=$K3S_LOG_MAX_FILES"
   fi
+  # Штатная остановка подов при выключении ноды: kubelet перехватывает
+  # reboot/shutdown через systemd-logind и даёт подам завершиться. Поды
+  # никуда не переезжают — важно для StatefulSet с local-path томами.
+  if [ "$K3S_SHUTDOWN_GRACE" -gt 0 ]; then
+    echo "  - shutdown-grace-period=${K3S_SHUTDOWN_GRACE}s"
+    echo "  - shutdown-grace-period-critical-pods=${K3S_SHUTDOWN_GRACE_CRITICAL}s"
+  fi
 } > "$cfg"
 chmod 0600 "$cfg"
 log "записан $cfg"
+
+# logind по умолчанию даёт на задержку выключения 5 с; kubelet просит
+# столько, сколько указано в shutdown-grace-period, иначе урежет до лимита.
+if [ "$K3S_SHUTDOWN_GRACE" -gt 0 ] && command -v systemctl >/dev/null 2>&1; then
+  mkdir -p /etc/systemd/logind.conf.d
+  printf '[Login]\nInhibitDelayMaxSec=%s\n' "$K3S_SHUTDOWN_GRACE" > /etc/systemd/logind.conf.d/90-k3sctl.conf
+  systemctl kill -s HUP systemd-logind 2>/dev/null || true
+  log "штатная остановка подов при выключении: ${K3S_SHUTDOWN_GRACE}s (системные ${K3S_SHUTDOWN_GRACE_CRITICAL}s)"
+elif [ "$K3S_SHUTDOWN_GRACE" -gt 0 ]; then
+  warn "нет systemd — штатная остановка подов при выключении работать не будет"
+fi
 
 # --- 3. официальный установщик ---
 # Если k3s уже работает, установщик при той же версии службу не перезапускает,

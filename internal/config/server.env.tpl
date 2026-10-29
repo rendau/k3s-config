@@ -66,6 +66,10 @@ K3S_EVICTION_HARD={{.K3sEvictionHard}}
 # логи контейнеров: размер одного файла и сколько файлов хранить на контейнер
 K3S_LOG_MAX_SIZE={{.K3sLogMaxSize}}
 K3S_LOG_MAX_FILES={{.K3sLogMaxFiles}}
+# при перезагрузке/выключении ноды kubelet сначала штатно останавливает
+# поды: секунд на все поды и из них на системные; 0 = выключить
+K3S_SHUTDOWN_GRACE={{.K3sShutdownGrace}}
+K3S_SHUTDOWN_GRACE_CRITICAL={{.K3sShutdownGraceCritical}}
 # Только для agent: откуда взять адрес master и токен кластера.
 # SSH-хост master, токен читается с него через sudo
 K3S_SERVER_SSH_HOST=

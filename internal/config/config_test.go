@@ -107,6 +107,8 @@ func TestInit_FillsDefaults(t *testing.T) {
 	assert.Equal(t, "10Mi", loaded.K3sLogMaxSize)
 	assert.Equal(t, 3, loaded.K3sLogMaxFiles)
 	assert.Equal(t, "500M", loaded.JournalMaxUse)
+	assert.Equal(t, 60, loaded.K3sShutdownGrace)
+	assert.Equal(t, 20, loaded.K3sShutdownGraceCritical)
 	assert.Equal(t, "root", loaded.BootstrapUser)
 	assert.True(t, loaded.PrepareUpgrade)
 	assert.True(t, loaded.PrepareDisablePassword)
