@@ -12,7 +12,7 @@ LDFLAGS = -X $(MODULE)/internal/constant.Version=$(VERSION) \
 	-X $(MODULE)/internal/constant.BuiltAt=$(BUILT_AT)
 
 .SILENT:
-.PHONY: build install clean check e2e
+.PHONY: build install clean check e2e e2e-adopt
 
 build:
 	mkdir -p $(BUILD_PATH)
@@ -34,3 +34,7 @@ check:
 # сквозной тест на docker-стенде (test/run_tests.sh)
 e2e:
 	./test/run_tests.sh
+
+# сквозной тест на кластере, поставленном руками (test/run_adopt_tests.sh)
+e2e-adopt:
+	./test/run_adopt_tests.sh

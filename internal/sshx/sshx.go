@@ -21,12 +21,16 @@ const AskpassEnv = "K3SCTL_ASKPASS_FILE"
 
 // Target — куда и под кем подключаться.
 type Target struct {
-	Host      string
-	Port      int
-	User      string
-	Key       string // путь к приватному ключу; пусто = ключи по умолчанию / агент
-	Password  string // пароль вместо ключа (первый вход под root от провайдера)
-	ExtraOpts string // дополнительные опции ssh одной строкой, напр. "-o ProxyJump=bastion"
+	Host     string
+	Port     int
+	User     string
+	Key      string // путь к приватному ключу; пусто = ключи по умолчанию / агент
+	Password string // пароль вместо ключа (первый вход под root от провайдера)
+
+	// SudoPassword — пароль для sudo там, где sudo без пароля ещё не настроен
+	// (сервер, настроенный руками); пусто = sudo -n.
+	SudoPassword string
+	ExtraOpts    string // дополнительные опции ssh одной строкой, напр. "-o ProxyJump=bastion"
 
 	// Stderr — куда идёт stderr сервера (по умолчанию os.Stderr).
 	Stderr io.Writer
@@ -139,21 +143,20 @@ func Askpass(out io.Writer) (bool, error) {
 // RunScript выполняет sh-скрипт на сервере и возвращает его stdout.
 // Скрипт сначала целиком сохраняется во временный файл и только потом
 // запускается, поэтому heredoc и чтение stdin внутри него безопасны.
-// С asRoot скрипт идёт через sudo -n, если вошли не под root.
+// С asRoot скрипт идёт через sudo, если вошли не под root: sudo -n либо, если
+// задан SudoPassword, sudo -S. Пароль уходит первой строкой stdin, в аргументы
+// команд он не попадает.
 func (t Target) RunScript(ctx context.Context, script string, asRoot bool) (string, error) {
-	runner := `sh "$f"`
-	if asRoot {
-		runner = `if [ "$(id -u)" = 0 ]; then sh "$f"; else sudo -n sh "$f"; fi`
-	}
-	// LC_ALL=C.UTF-8: клиентский ssh (macOS) передаёт серверу свои LANG/LC_*,
-	// которых там обычно нет, и apt/perl засыпают вывод предупреждениями о локали.
-	remote := fmt.Sprintf(`export LC_ALL=C.UTF-8 LANG=C.UTF-8; f=$(mktemp) && cat >"$f" && { %s; }; rc=$?; rm -f "$f"; exit $rc`, runner)
+	withPassword := asRoot && t.SudoPassword != ""
 
-	cmd, cleanup, err := t.command(ctx, remote)
+	cmd, cleanup, err := t.command(ctx, remoteRunner(asRoot, withPassword))
 	if err != nil {
 		return "", err
 	}
 	defer cleanup()
+	if withPassword {
+		script = t.SudoPassword + "\n" + script
+	}
 	cmd.Stdin = strings.NewReader(script)
 
 	var out bytes.Buffer
@@ -164,6 +167,22 @@ func (t Target) RunScript(ctx context.Context, script string, asRoot bool) (stri
 	}
 
 	return out.String(), nil
+}
+
+// remoteRunner собирает команду, которая принимает скрипт со stdin и запускает его.
+func remoteRunner(asRoot, withPassword bool) string {
+	read, runner := "", `sh "$f"`
+	switch {
+	case withPassword:
+		read = `IFS= read -r p; `
+		runner = `if [ "$(id -u)" = 0 ]; then sh "$f"; else printf '%s\n' "$p" | sudo -S -p '' sh "$f"; fi`
+	case asRoot:
+		runner = `if [ "$(id -u)" = 0 ]; then sh "$f"; else sudo -n sh "$f"; fi`
+	}
+
+	// LC_ALL=C.UTF-8: клиентский ssh (macOS) передаёт серверу свои LANG/LC_*,
+	// которых там обычно нет, и apt/perl засыпают вывод предупреждениями о локали.
+	return fmt.Sprintf(`export LC_ALL=C.UTF-8 LANG=C.UTF-8; %sf=$(mktemp) && cat >"$f" && { %s; }; rc=$?; rm -f "$f"; exit $rc`, read, runner)
 }
 
 // Output выполняет одну команду на сервере и возвращает её stdout без

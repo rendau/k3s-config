@@ -10,6 +10,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// initServer — то, что делает k3sctl init для ещё не созданного сервера.
+func initServer(name, k3sVersion string) (string, *Config, error) {
+	if err := CheckInit(name); err != nil {
+		return "", nil, err
+	}
+	conf, err := Defaults(name)
+	if err != nil {
+		return "", nil, err
+	}
+	conf.K3sVersion = k3sVersion
+
+	path, err := Write(name, conf, nil)
+
+	return path, conf, err
+}
+
 // inTempDir переходит во временный каталог на время теста.
 func inTempDir(t *testing.T) string {
 	t.Helper()
@@ -56,7 +72,7 @@ func TestInit_FillsDefaults(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".ssh"), 0o700))
 	inTempDir(t)
 
-	path, conf, err := Init("nokey", "")
+	path, conf, err := initServer("nokey", "")
 	require.NoError(t, err)
 	assert.Empty(t, conf.SSHKey, "ключей в ~/.ssh нет — пусто")
 	assert.Empty(t, conf.SSHPubkey)
@@ -78,13 +94,13 @@ func TestInit_FillsDefaults(t *testing.T) {
 	assert.Contains(t, string(content), "\nPREPARE_REBOOT_CRON=0 4 * * 0\n")
 
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".ssh", "id_ed25519"), nil, 0o600))
-	_, conf, err = Init("ed", "")
+	_, conf, err = initServer("ed", "")
 	require.NoError(t, err)
 	assert.Equal(t, "~/.ssh/id_ed25519", conf.SSHKey)
 	assert.Equal(t, "~/.ssh/id_ed25519.pub", conf.SSHPubkey)
 
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".ssh", "id_rsa"), nil, 0o600))
-	_, conf, err = Init("rsa", "v1.36.5+k3s1")
+	_, conf, err = initServer("rsa", "v1.36.5+k3s1")
 	require.NoError(t, err)
 	assert.Equal(t, "~/.ssh/id_rsa", conf.SSHKey, "id_rsa в приоритете")
 	assert.Equal(t, "v1.36.5+k3s1", conf.K3sVersion, "версия k3s, переданная init")
@@ -174,6 +190,62 @@ func TestLoad_FileOverridesEnvironment(t *testing.T) {
 	assert.Equal(t, "env-user", conf.SSHUser, "чего нет в файле — берётся из окружения")
 }
 
+// Настройки, снятые с сервера, и заметки попадают в файл и читаются обратно;
+// из окружения init берёт только вход на сервер.
+func TestWrite_FromServer(t *testing.T) {
+	inTempDir(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("SSH_PORT", "2222")
+	t.Setenv("SSH_EXTRA_OPTS", "-o LogLevel=ERROR -o X=y")
+	t.Setenv("K3S_ROLE", "agent")
+
+	conf, err := Defaults("w1")
+	require.NoError(t, err)
+	assert.Equal(t, 2222, conf.SSHPort)
+	assert.Equal(t, "server", conf.K3sRole, "K3S_* из окружения init не берёт")
+
+	conf.SSHHost = "10.0.0.2"
+	conf.BootstrapUser = "user"
+	conf.BootstrapPassword = "ask"
+	conf.PrepareDisablePassword = false
+	conf.K3sRole = "agent"
+	conf.K3sVersion = "v1.34.12+k3s1"
+	conf.K3sExtraArgs = "--disable traefik --cluster-cidr 10.42.0.0/16"
+	conf.K3sTLSSan = "1.2.3.4,k3s.example.com"
+	conf.K3sInstallEnv = "K3S_NODE_NAME=w1"
+	conf.K3sServerSSHHost = "10.0.0.1"
+	conf.K3sServerURL = "https://10.0.0.1:6443"
+
+	path, err := Write("w1", conf, []string{"ручные настройки kubelet: --kubelet-arg a=1"})
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "\n# С сервера не перенесено: ручные настройки kubelet: --kubelet-arg a=1\n")
+
+	loaded, err := Load("w1")
+	require.NoError(t, err)
+	assert.Equal(t, conf, loaded)
+}
+
+func TestSetK3sVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.env")
+	require.NoError(t, os.WriteFile(path, []byte("# версия\nSSH_HOST=h\nK3S_VERSION=v1.34.12+k3s1\nK3S_ROLE=agent\n"), 0o600))
+
+	require.NoError(t, SetK3sVersion(path, "v1.35.9+k3s1"))
+	content, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "# версия\nSSH_HOST=h\nK3S_VERSION=v1.35.9+k3s1\nK3S_ROLE=agent\n", string(content), "остальное не тронуто")
+
+	require.NoError(t, os.WriteFile(path, []byte("SSH_HOST=h"), 0o600))
+	require.NoError(t, SetK3sVersion(path, "v1.35.9+k3s1"))
+	content, err = os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "SSH_HOST=h\nK3S_VERSION=v1.35.9+k3s1\n", string(content), "строки не было — дописана")
+
+	require.Error(t, SetK3sVersion(filepath.Join(t.TempDir(), "nope.env"), "v1"))
+}
+
 func TestResolve(t *testing.T) {
 	assert.Equal(t, filepath.Join("servers", "zeon.env"), Resolve("zeon"), "имя сервера — файл в servers/")
 	assert.Equal(t, "/tmp/x/srv.env", Resolve("/tmp/x/srv.env"), "абсолютный путь")
@@ -188,7 +260,7 @@ func TestInitListLoad(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, names, "пока ничего не заведено")
 
-	path, _, err := Init("zeon", "")
+	path, _, err := initServer("zeon", "")
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join("servers", "zeon.env"), path)
 
@@ -196,14 +268,14 @@ func TestInitListLoad(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 
-	_, _, err = Init("zeon", "")
+	_, _, err = initServer("zeon", "")
 	require.Error(t, err, "повторный init не перезаписывает")
-	_, _, err = Init("bad/name", "")
+	_, _, err = initServer("bad/name", "")
 	require.Error(t, err)
-	_, _, err = Init("", "")
+	_, _, err = initServer("", "")
 	require.Error(t, err)
 
-	_, _, err = Init("mechta", "")
+	_, _, err = initServer("mechta", "")
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile("stray.env", nil, 0o600))
 

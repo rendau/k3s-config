@@ -28,6 +28,10 @@ func Install(ctx context.Context, c *config.Config) error {
 			c.K3sShutdownGraceCritical, c.K3sShutdownGrace)
 	}
 
+	if err := checkExisting(ctx, c); err != nil {
+		return err
+	}
+
 	serverURL, token, tlsSan := "", "", ""
 
 	switch c.K3sRole {
@@ -76,6 +80,32 @@ func Install(ctx context.Context, c *config.Config) error {
 	return nil
 }
 
+// checkExisting смотрит, что уже стоит на сервере: на ноду с другой ролью
+// install не пойдёт, а на чужую, поставленную не через k3sctl, — только с
+// согласия, потому что заменит её config.yaml и службу настройками из файла.
+func checkExisting(ctx context.Context, c *config.Config) error {
+	info, err := inspect(ctx, target(c, c.SSHUser))
+	if err != nil {
+		return fmt.Errorf("%w (нужен sudo без пароля: k3sctl prepare)", err)
+	}
+	if info.Role == "" {
+		return nil
+	}
+	if info.Role != c.K3sRole {
+		return fmt.Errorf("на %s стоит роль %s, а в файле K3S_ROLE=%s", c.SSHHost, info.Role, c.K3sRole)
+	}
+	if info.Managed {
+		return nil
+	}
+
+	ui.Warn("k3s на %s поставлен не через k3sctl: config.yaml и настройки службы будут заменены настройками из файла", c.SSHHost)
+	if !ui.Confirm("Продолжить?") {
+		return fmt.Errorf("отменено, ничего не менял")
+	}
+
+	return nil
+}
+
 // resolveMaster возвращает адрес API master и токен кластера для agent.
 func resolveMaster(ctx context.Context, c *config.Config) (string, string, error) {
 	if c.K3sServerURL == "" && c.K3sServerSSHHost == "" {
@@ -94,17 +124,7 @@ func resolveMaster(ctx context.Context, c *config.Config) (string, string, error
 		return "", "", fmt.Errorf("для agent задайте K3S_TOKEN или K3S_SERVER_SSH_HOST")
 	}
 
-	user := c.K3sServerSSHUser
-	if user == "" {
-		user = c.SSHUser
-	}
-	master := sshx.Target{
-		Host:      c.K3sServerSSHHost,
-		Port:      c.K3sServerSSHPort,
-		User:      user,
-		Key:       c.SSHKey,
-		ExtraOpts: c.SSHExtraOpts,
-	}
+	master := masterTarget(c)
 
 	ui.Info("читаю токен кластера с master %s", master)
 	token, err := master.Output(ctx, "sudo -n cat "+nodeTokenPath)
@@ -116,4 +136,20 @@ func resolveMaster(ctx context.Context, c *config.Config) (string, string, error
 	}
 
 	return serverURL, token, nil
+}
+
+// masterTarget собирает параметры SSH-подключения к master для agent.
+func masterTarget(c *config.Config) sshx.Target {
+	user := c.K3sServerSSHUser
+	if user == "" {
+		user = c.SSHUser
+	}
+
+	return sshx.Target{
+		Host:      c.K3sServerSSHHost,
+		Port:      c.K3sServerSSHPort,
+		User:      user,
+		Key:       c.SSHKey,
+		ExtraOpts: c.SSHExtraOpts,
+	}
 }

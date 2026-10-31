@@ -12,6 +12,10 @@ CONTAINER=k3s-sa-test
 SSH_PORT=2222
 API_PORT=16443
 K3S_VERSION=${K3S_VERSION:-v1.33.5+k3s1}
+# для k3sctl upgrade: следующая минорная, ниже текущей, через минорную
+K3S_NEXT_VERSION=${K3S_NEXT_VERSION:-v1.34.1+k3s1}
+K3S_OLD_VERSION=v1.32.9+k3s1
+K3S_SKIP_VERSION=v1.35.0+k3s1
 TMP=$(mktemp -d)
 
 cleanup() {
@@ -51,10 +55,10 @@ K3SCTL=$TMP/k3sctl
 
 echo "--- k3sctl init / list ---"
 mkdir -p "$TMP/work"
-check "init создаёт файл сервера в servers/" bash -c 'cd "$1" && "$2" init demo' _ "$TMP/work" "$K3SCTL"
+check "init создаёт файл сервера в servers/" bash -c 'cd "$1" && "$2" init demo </dev/null' _ "$TMP/work" "$K3SCTL"
 check "файл servers/demo.env появился" test -f "$TMP/work/servers/demo.env"
 check "list показывает сервер" test "$(cd "$TMP/work" && "$K3SCTL" list)" = demo
-check "повторный init не перезаписывает" test "$(cd "$TMP/work" && "$K3SCTL" init demo >/dev/null 2>&1; echo $?)" = 1
+check "повторный init не перезаписывает" test "$(cd "$TMP/work" && "$K3SCTL" init demo >/dev/null 2>&1 </dev/null; echo $?)" = 1
 
 echo "--- сборка образа $IMAGE (k3s $K3S_VERSION) ---"
 docker build -q --build-arg "K3S_VERSION=$K3S_VERSION" -t "$IMAGE" "$HERE" >/dev/null
@@ -100,6 +104,16 @@ done
 nc -z 127.0.0.1 "$SSH_PORT" || fail "sshd в контейнере не поднялся"
 check "до prepare root по ключу не пускает (ключа у него нет)" \
   test "$(tssh root@127.0.0.1 true >/dev/null 2>&1; echo $?)" != 0
+
+echo "--- k3sctl init: пустой сервер ---"
+(cd "$TMP/work" && printf '127.0.0.1:%s\nroot\n' "$SSH_PORT" | SSH_KEY=$TMP/id_test BOOTSTRAP_PASSWORD=$ROOT_PASSWORD \
+  SSH_EXTRA_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR" "$K3SCTL" init fresh)
+fresh=$TMP/work/servers/fresh.env
+check "адрес и порт записаны" grep -q "^SSH_PORT=$SSH_PORT$" "$fresh"
+check "версия k3s стабильная, а не пустая" grep -q '^K3S_VERSION=v' "$fresh"
+check "на пустом сервере пароль закрываем" grep -q '^PREPARE_DISABLE_PASSWORD=true$' "$fresh"
+check "пароль записан как ask" grep -q '^BOOTSTRAP_PASSWORD=ask$' "$fresh"
+check "самого пароля в файле нет" test "$(grep -c "$ROOT_PASSWORD" "$fresh" || true)" = 0
 
 echo "--- k3sctl prepare (первый вход по паролю root) ---"
 "$K3SCTL" prepare "$TMP/test.env"
@@ -167,6 +181,47 @@ check "токен со сроком работает" kc --context k3s-sa-test-t
 check "первый контекст не пострадал" kc --context k3s-sa-test get ns
 check "текущий контекст не переключён (SET_CURRENT_CONTEXT=false)" \
   test "$(kc config current-context 2>/dev/null || true)" = ""
+
+echo "--- k3sctl upgrade ---"
+installed() { tssh root@127.0.0.1 'k3s --version' | awk 'NR == 1 { print $3 }'; }
+# with_version ВЕРСИЯ — файл настроек с этой K3S_VERSION
+with_version() {
+  cp "$TMP/test.env" "$TMP/upgrade.env"
+  echo "K3S_VERSION=$1" >> "$TMP/upgrade.env"
+}
+with_version "$K3S_VERSION"
+plan=$("$K3SCTL" upgrade "$TMP/upgrade.env" 2>&1 </dev/null)
+case "$plan" in
+  *"план:"*"$K3S_VERSION → v1.34."*) pass "при текущей версии в файле upgrade сам находит следующую минорную" ;;
+  *) fail "upgrade не нашёл следующую версию: $plan" ;;
+esac
+check "без подтверждения версия файла прежняя" grep -q "^K3S_VERSION=$K3S_VERSION$" "$TMP/upgrade.env"
+with_version "$K3S_OLD_VERSION"
+check "upgrade отказывает в откате" test "$("$K3SCTL" upgrade "$TMP/upgrade.env" >/dev/null 2>&1; echo $?)" = 1
+with_version "$K3S_SKIP_VERSION"
+check "upgrade отказывает в прыжке через минорную версию" test "$("$K3SCTL" upgrade "$TMP/upgrade.env" >/dev/null 2>&1; echo $?)" = 1
+check "после отказов версия прежняя" test "$(installed)" = "$K3S_VERSION"
+
+with_version "$K3S_NEXT_VERSION"
+cfg_sum=$(tssh root@127.0.0.1 'sha256sum /etc/rancher/k3s/config.yaml')
+echo n | "$K3SCTL" upgrade "$TMP/upgrade.env"
+check "ответ n ничего не меняет" test "$(installed)" = "$K3S_VERSION"
+echo y | "$K3SCTL" upgrade "$TMP/upgrade.env"
+check "бинарник k3s обновлён" test "$(installed)" = "$K3S_NEXT_VERSION"
+check "старый бинарник сохранён" tssh root@127.0.0.1 'test -x /usr/local/bin/k3s.prev'
+check "config.yaml не тронут" test "$(tssh root@127.0.0.1 'sha256sum /etc/rancher/k3s/config.yaml')" = "$cfg_sum"
+
+# Служба в контейнере не запускается (см. запуск выше), перезапускаем руками.
+tssh root@127.0.0.1 'pkill -x k3s-server || pkill -x k3s || true'
+sleep 3
+tssh root@127.0.0.1 'nohup k3s server --disable-agent >/var/log/k3s.log 2>&1 </dev/null &'
+for _ in $(seq 1 90); do
+  tssh user@127.0.0.1 'sudo -n kubectl get --raw /readyz' >/dev/null 2>&1 && break
+  sleep 2
+done
+check "k3s стартует на новой версии" tssh user@127.0.0.1 'sudo -n kubectl get --raw /readyz'
+check "API отвечает новой версией" test "$(tssh user@127.0.0.1 'sudo -n kubectl get --raw /version' | sed -n 's/.*"gitVersion": *"\([^"]*\)".*/\1/p')" = "$K3S_NEXT_VERSION"
+check "доступ из kubeconfig пережил обновление" kc --context k3s-sa-test get ns
 
 echo
 echo "ВСЕ ТЕСТЫ ПРОШЛИ"

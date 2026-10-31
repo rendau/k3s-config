@@ -55,4 +55,18 @@ func TestCloudInit(t *testing.T) {
 	assert.NotContains(t, s, "timezone:", "без часового пояса строки нет")
 	assert.NotContains(t, s, "k3sctl-reboot", "без расписания задания нет")
 	assert.NotContains(t, s, "journald", "без потолка журнала настройки нет")
+	assert.Contains(t, s, "\n  - path: /etc/needrestart/conf.d/k3s.conf\n", "защита k3s от перезапуска при обновлении пакетов")
+}
+
+func TestCloudInit_Password(t *testing.T) {
+	s, err := CloudInit(CloudInitParams{SSHUser: "user", SSHPubkeys: []string{"ssh-ed25519 AAAA"}, DisablePassword: true})
+	require.NoError(t, err)
+	assert.Contains(t, s, "\nssh_pwauth: false\ndisable_root: true\n")
+	assert.Contains(t, s, "/etc/ssh/sshd_config.d/00-no-password.conf")
+
+	s, err = CloudInit(CloudInitParams{SSHUser: "user", SSHPubkeys: []string{"ssh-ed25519 AAAA"}})
+	require.NoError(t, err)
+	assert.Contains(t, s, "\nssh_pwauth: true\n")
+	assert.NotContains(t, s, "disable_root")
+	assert.NotContains(t, s, "00-no-password.conf")
 }

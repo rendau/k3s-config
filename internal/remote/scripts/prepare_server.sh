@@ -24,6 +24,11 @@ ROOT_KEY=${ROOT_KEY:-false}
 # --- 1. пакеты ---
 if command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
+  # needrestart перезапускает службы после обновлений, и k3s тоже: у него
+  # статический бинарник, а каждый перезапуск — это пропавший на время API.
+  # Касается и apt здесь, и ежедневных автообновлений.
+  mkdir -p /etc/needrestart/conf.d
+  printf '%s\n' '$nrconf{override_rc}{qr(^k3s(-agent)?\.service$)} = 0;' > /etc/needrestart/conf.d/k3s.conf
   log "apt-get update"
   apt-get -qq update
   if [ "$PREPARE_UPGRADE" = true ]; then

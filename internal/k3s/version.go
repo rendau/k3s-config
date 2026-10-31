@@ -13,12 +13,18 @@ import (
 	"github.com/rendau/k3s-config/internal/httpx"
 )
 
-// ChannelURL — канал stable: отвечает перенаправлением на страницу релиза,
-// последний элемент адреса которой — версия, напр. v1.36.5+k3s1.
-const ChannelURL = "https://update.k3s.io/v1-release/channels/stable"
+// ChannelsURL — каналы выпусков: stable, v1.35 и т.п. Канал отвечает
+// перенаправлением на страницу релиза, последний элемент адреса которой —
+// версия, напр. v1.36.5+k3s1.
+const ChannelsURL = "https://update.k3s.io/v1-release/channels/"
 
 // StableVersion возвращает текущую стабильную версию k3s.
 func StableVersion(ctx context.Context) (string, error) {
+	return ChannelVersion(ctx, "stable")
+}
+
+// ChannelVersion возвращает последнюю версию канала.
+func ChannelVersion(ctx context.Context, channel string) (string, error) {
 	client := httpx.New(httpx.Config{
 		Timeout: 10 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -26,7 +32,7 @@ func StableVersion(ctx context.Context) (string, error) {
 		},
 	})
 
-	return versionFromChannel(ctx, client, ChannelURL)
+	return versionFromChannel(ctx, client, ChannelsURL+channel)
 }
 
 func versionFromChannel(ctx context.Context, client *http.Client, url string) (string, error) {

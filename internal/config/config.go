@@ -1,7 +1,6 @@
 // Package config читает настройки сервера из файла формата .env.
 // Файлы серверов лежат в подпапке servers/ текущего каталога: servers/<имя>.env;
-// создаёт их Init по шаблону server.env.tpl (встроен), сразу подставляя
-// найденный ssh-ключ и значения по умолчанию.
+// создаёт их Write по шаблону server.env.tpl (встроен).
 // Значения из файла имеют приоритет над переменными окружения процесса.
 package config
 
@@ -13,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"text/template"
@@ -31,6 +31,8 @@ const (
 	// Dir — подпапка текущего каталога с файлами серверов.
 	Dir = "servers"
 )
+
+var k3sVersionRe = regexp.MustCompile(`(?m)^K3S_VERSION=.*$`)
 
 type Config struct {
 	// SSH до сервера
@@ -189,38 +191,77 @@ func findKey() string {
 	return ""
 }
 
-// Init создаёт файл servers/<имя>.env (папку заводит при необходимости):
-// находит ssh-ключ в ~/.ssh, подставляет умолчания, имя контекста и
-// переданную версию k3s (пусто = последняя стабильная на момент install),
-// так что человеку остаётся вписать SSH_HOST. Возвращает путь к файлу и
-// собранные настройки. Существующий файл не перезаписывает.
-func Init(name, k3sVersion string) (string, *Config, error) {
+// Defaults собирает настройки нового сервера: умолчания, найденный ssh-ключ,
+// имя контекста. Из окружения процесса берёт только то, что касается входа
+// на сервер (SSH_*, BOOTSTRAP_*) и файла kubeconfig.
+func Defaults(name string) (*Config, error) {
+	vars := map[string]string{}
+	for _, kv := range os.Environ() {
+		k, v, ok := strings.Cut(kv, "=")
+		if ok && (strings.HasPrefix(k, "SSH_") || strings.HasPrefix(k, "BOOTSTRAP_") || k == "LOCAL_KUBECONFIG") {
+			vars[k] = v
+		}
+	}
+
+	conf, err := parse(vars)
+	if err != nil {
+		return nil, fmt.Errorf("умолчания: %w", err)
+	}
+	if conf.SSHKey == "" {
+		conf.SSHKey = findKey()
+	}
+	conf.fillDerived(name)
+
+	return conf, nil
+}
+
+// Write создаёт файл servers/<имя>.env из настроек (папку заводит при
+// необходимости) и возвращает путь к нему. notes пишутся в файл комментариями:
+// что с сервера намеренно не перенесено. Существующий файл не перезаписывает.
+func Write(name string, conf *Config, notes []string) (string, error) {
 	if err := CheckInit(name); err != nil {
-		return "", nil, err
+		return "", err
 	}
 	path := filepath.Join(Dir, name+ext)
 
-	conf, err := parse(map[string]string{})
+	content, err := render(name, conf, notes)
 	if err != nil {
-		return "", nil, fmt.Errorf("умолчания: %w", err)
-	}
-	conf.SSHKey = findKey()
-	conf.K3sVersion = k3sVersion
-	conf.fillDerived(name)
-
-	content, err := render(name, conf)
-	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 
 	if err = os.MkdirAll(Dir, 0o700); err != nil {
-		return "", nil, fmt.Errorf("папка %s: %w", Dir, err)
+		return "", fmt.Errorf("папка %s: %w", Dir, err)
 	}
 	if err = os.WriteFile(path, content, 0o600); err != nil {
-		return "", nil, fmt.Errorf("запись %s: %w", path, err)
+		return "", fmt.Errorf("запись %s: %w", path, err)
 	}
 
-	return path, conf, nil
+	return path, nil
+}
+
+// SetK3sVersion записывает версию в строку K3S_VERSION файла настроек, остальное
+// не трогает; если такой строки нет, дописывает её.
+func SetK3sVersion(path, version string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("чтение %s: %w", path, err)
+	}
+
+	line := []byte("K3S_VERSION=" + version)
+	if k3sVersionRe.Match(content) {
+		content = k3sVersionRe.ReplaceAllLiteral(content, line)
+	} else {
+		if len(content) > 0 && !bytes.HasSuffix(content, []byte("\n")) {
+			content = append(content, '\n')
+		}
+		content = append(append(content, line...), '\n')
+	}
+
+	if err = os.WriteFile(path, content, 0o600); err != nil {
+		return fmt.Errorf("запись %s: %w", path, err)
+	}
+
+	return nil
 }
 
 // CheckInit проверяет, что сервер с таким именем можно завести: имя —
@@ -244,7 +285,7 @@ func fileExists(path string) bool {
 }
 
 // render заполняет шаблон файла сервера.
-func render(name string, conf *Config) ([]byte, error) {
+func render(name string, conf *Config, notes []string) ([]byte, error) {
 	tpl, err := template.New("server.env").Parse(serverTpl)
 	if err != nil {
 		return nil, fmt.Errorf("шаблон файла сервера: %w", err)
@@ -252,9 +293,10 @@ func render(name string, conf *Config) ([]byte, error) {
 
 	var buf bytes.Buffer
 	data := struct {
-		Name string
+		Name  string
+		Notes []string
 		*Config
-	}{name, conf}
+	}{name, notes, conf}
 	if err = tpl.Execute(&buf, data); err != nil {
 		return nil, fmt.Errorf("шаблон файла сервера: %w", err)
 	}

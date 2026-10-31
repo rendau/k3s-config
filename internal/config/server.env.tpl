@@ -1,12 +1,16 @@
 # Настройки k3sctl для сервера «{{.Name}}», создано командой k3sctl init.
-# Все значения уже проставлены: найденный ssh-ключ и умолчания. Обязательно
-# заполнить только SSH_HOST, остальное править по необходимости.
+# Все значения уже проставлены: стандарт k3sctl, а для настроенного сервера
+# ещё то, без чего кластер сломается (роль, версия, адрес master, важные
+# флаги). Обязателен только SSH_HOST, остальное править по необходимости.
 # Комментарий пишите отдельной строкой: «X=   # текст» прочитается как
 # значение «# текст».
+{{- range .Notes }}
+# С сервера не перенесено: {{ . }}
+{{- end }}
 
 # ---------- SSH до сервера ----------
 # адрес или имя сервера (обязательно)
-SSH_HOST=
+SSH_HOST={{.SSHHost}}
 SSH_PORT={{.SSHPort}}
 # обычный пользователь с sudo, его заводит k3sctl prepare / cloud-init
 SSH_USER={{.SSHUser}}
@@ -19,18 +23,19 @@ SSH_PUBKEY={{.SSHPubkey}}
 # вместе с основным, напр. ~/.ssh/backup.pub,ssh-ed25519 AAAA... kolya
 SSH_EXTRA_PUBKEYS=
 # дополнительные опции ssh, напр. -o ProxyJump=bastion
-SSH_EXTRA_OPTS=
+SSH_EXTRA_OPTS={{.SSHExtraOpts}}
 
 # ---------- k3sctl prepare / cloud-init ----------
-# под кем заходить на свежий сервер
+# под кем заходить на сервер в первый раз
 BOOTSTRAP_USER={{.BootstrapUser}}
-# пароль от провайдера для первого входа, если ключа у root ещё нет:
-# пусто = только по ключу, ask = спросить в терминале, иначе сам пароль.
-# Нужен один раз: prepare положит root-у ваш ключ и закроет вход по паролю
-BOOTSTRAP_PASSWORD=
+# пароль этого пользователя: для входа, если ключа ещё нет, и для sudo, если
+# он его спрашивает. Пусто = только по ключу, ask = спросить в терминале,
+# иначе сам пароль. Нужен один раз: prepare положит ключ и настроит sudo без пароля
+BOOTSTRAP_PASSWORD={{.BootstrapPassword}}
 # обновить пакеты
 PREPARE_UPGRADE={{.PrepareUpgrade}}
-# запретить вход по паролю всем, включая root
+# запретить вход по паролю всем, включая root (и в prepare, и в cloud-init);
+# false = оставить как есть. На настроенном сервере init ставит то, что нашёл
 PREPARE_DISABLE_PASSWORD={{.PrepareDisablePassword}}
 # часовой пояс сервера; пусто = не трогать
 SERVER_TIMEZONE={{.ServerTimezone}}
@@ -48,15 +53,17 @@ JOURNAL_MAX_USE={{.JournalMaxUse}}
 # server (master) или agent (worker)
 K3S_ROLE={{.K3sRole}}
 # init записывает текущую стабильную с update.k3s.io; пусто = последняя
-# стабильная на момент install
+# стабильная на момент install. На настроенном сервере init пишет то, что
+# стоит. k3sctl upgrade сам находит следующую версию и записывает её сюда;
+# впишите новее установленной, если нужна конкретная
 K3S_VERSION={{.K3sVersion}}
 # адреса в сертификате API через запятую, напр. k3s.example.com,1.2.3.4;
 # пусто = SSH_HOST
-K3S_TLS_SAN=
+K3S_TLS_SAN={{.K3sTLSSan}}
 # дополнительные аргументы k3s, напр. --disable traefik
-K3S_EXTRA_ARGS=
+K3S_EXTRA_ARGS={{.K3sExtraArgs}}
 # переменные установщика get.k3s.io, напр. INSTALL_K3S_CHANNEL=latest
-K3S_INSTALL_ENV=
+K3S_INSTALL_ENV={{.K3sInstallEnv}}
 # запас процессора и памяти для самой ОС и k3s, подам не отдаётся,
 # напр. cpu=200m,memory=512Mi; пусто = по размеру машины (10% памяти,
 # не меньше 256Mi и не больше 2Gi; 100m на ядро, не больше 1000m)
@@ -72,12 +79,12 @@ K3S_SHUTDOWN_GRACE={{.K3sShutdownGrace}}
 K3S_SHUTDOWN_GRACE_CRITICAL={{.K3sShutdownGraceCritical}}
 # Только для agent: откуда взять адрес master и токен кластера.
 # SSH-хост master, токен читается с него через sudo
-K3S_SERVER_SSH_HOST=
+K3S_SERVER_SSH_HOST={{.K3sServerSSHHost}}
 K3S_SERVER_SSH_PORT={{.K3sServerSSHPort}}
 # пусто = SSH_USER
 K3S_SERVER_SSH_USER=
 # пусто = https://K3S_SERVER_SSH_HOST:6443
-K3S_SERVER_URL=
+K3S_SERVER_URL={{.K3sServerURL}}
 # токен кластера вместо чтения с master
 K3S_TOKEN=
 

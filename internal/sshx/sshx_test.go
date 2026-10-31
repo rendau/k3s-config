@@ -34,6 +34,16 @@ func TestTarget_args(t *testing.T) {
 	}, tg.args(), "с паролем: без BatchMode и без ключа")
 }
 
+func TestRemoteRunner(t *testing.T) {
+	assert.Contains(t, remoteRunner(false, false), `{ sh "$f"; }`)
+	assert.Contains(t, remoteRunner(true, false), `sudo -n sh "$f"`)
+
+	withPassword := remoteRunner(true, true)
+	assert.Contains(t, withPassword, `IFS= read -r p; f=$(mktemp)`, "пароль — первая строка stdin, до скрипта")
+	assert.Contains(t, withPassword, `sudo -S -p '' sh "$f"`)
+	assert.NotContains(t, withPassword, "sudo -n")
+}
+
 func TestCommand_Password(t *testing.T) {
 	tg := Target{Host: "h", User: "root", Password: "s3cret"}
 	cmd, cleanup, err := tg.command(t.Context(), "true")

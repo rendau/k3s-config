@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -42,4 +44,38 @@ func TestUpsert(t *testing.T) {
 	assert.Equal(t, "t1-new", cfg.AuthInfos["sa@one"].Token)
 	assert.Equal(t, "t2", cfg.AuthInfos["sa@two"].Token)
 	assert.Equal(t, "sa@one", cfg.Contexts["one"].AuthInfo)
+}
+
+func TestDecodeNode(t *testing.T) {
+	n := decodeNode(corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "data-apps-1",
+			Labels: map[string]string{"node-role.kubernetes.io/control-plane": "true"},
+		},
+		Status: corev1.NodeStatus{
+			NodeInfo: corev1.NodeSystemInfo{KubeletVersion: "v1.34.12+k3s1"},
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeMemoryPressure, Status: corev1.ConditionFalse},
+				{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+			},
+		},
+	}, 0)
+	assert.Equal(t, Node{Name: "data-apps-1", Version: "v1.34.12+k3s1", Ready: true, ControlPlane: true}, n)
+
+	n = decodeNode(corev1.Node{Status: corev1.NodeStatus{
+		Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionFalse}},
+	}}, 0)
+	assert.False(t, n.Ready)
+	assert.False(t, n.ControlPlane)
+}
+
+func TestFindContext(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	require.NoError(t, Upsert(path, Entry{Context: "b", Cluster: "b", User: "u", Server: "https://10.0.0.1:6443"}, false))
+	require.NoError(t, Upsert(path, Entry{Context: "a", Cluster: "a", User: "u", Server: "https://k3s.example.com:16443"}, false))
+
+	assert.Equal(t, "b", FindContext(path, "10.0.0.1"))
+	assert.Equal(t, "a", FindContext(path, "k3s.example.com"), "хост без порта")
+	assert.Empty(t, FindContext(path, "10.0.0.2"))
+	assert.Empty(t, FindContext(filepath.Join(t.TempDir(), "nope"), "10.0.0.1"), "файла нет — контекста нет")
 }

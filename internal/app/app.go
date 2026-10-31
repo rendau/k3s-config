@@ -11,7 +11,6 @@ import (
 	"github.com/rendau/k3s-config/internal/command"
 	"github.com/rendau/k3s-config/internal/config"
 	"github.com/rendau/k3s-config/internal/constant"
-	"github.com/rendau/k3s-config/internal/k3s"
 	"github.com/rendau/k3s-config/internal/sshx"
 	"github.com/rendau/k3s-config/internal/ui"
 )
@@ -20,7 +19,9 @@ const usageText = `k3sctl — новый сервер с k3s: подготови
 
 Порядок для нового сервера (здесь он назван zeon):
 
-  k3sctl init zeon          завести сервер: создаёт servers/zeon.env, его нужно заполнить
+  k3sctl init zeon          завести сервер: спросит адрес и создаст servers/zeon.env со
+                            стандартными настройками. Сервер может быть пустым, уже
+                            настроенным (в том числе руками) или ещё не созданным
   k3sctl cloud-init zeon    записать servers/zeon.cloud-init.yaml: user-data для поля
                             cloud-init при создании виртуалки
   k3sctl prepare zeon       ...или подготовить уже созданный сервер по SSH (под root)
@@ -30,6 +31,9 @@ const usageText = `k3sctl — новый сервер с k3s: подготови
 
 Ещё:
 
+  k3sctl upgrade zeon       обновить k3s на ноде: сам найдёт следующую версию, покажет план
+                            и спросит подтверждение; настройки не трогает (сначала master,
+                            потом workers; другая версия задаётся в K3S_VERSION)
   k3sctl list               какие серверы заведены (папка servers/)
   k3sctl version
 
@@ -72,7 +76,7 @@ func Run(args []string) int {
 
 	switch name {
 	case "init":
-		err = runInit(ctx, arg)
+		err = command.Init(ctx, arg)
 	case "list":
 		err = runList()
 	case "cloud-init":
@@ -85,6 +89,8 @@ func Run(args []string) int {
 		err = withConfig(arg, func(c *config.Config) error { return command.Access(ctx, c) })
 	case "setup":
 		err = withConfig(arg, func(c *config.Config) error { return command.Setup(ctx, c) })
+	case "upgrade":
+		err = withConfig(arg, func(c *config.Config) error { return command.Upgrade(ctx, c, config.Resolve(arg)) })
 	case "version":
 		fmt.Printf("k3sctl %s", constant.Version)
 		if constant.Commit != "" {
@@ -122,38 +128,6 @@ func withConfig(arg string, run func(*config.Config) error) error {
 	}
 
 	return run(conf)
-}
-
-func runInit(ctx context.Context, name string) error {
-	if name == "" {
-		return fmt.Errorf("укажите имя сервера: k3sctl init <имя>")
-	}
-	if err := config.CheckInit(name); err != nil {
-		return err
-	}
-
-	version, err := k3s.StableVersion(ctx)
-	if err != nil {
-		ui.Warn("не узнал стабильную версию k3s (%v): K3S_VERSION оставляю пустым, install возьмёт последнюю", err)
-	}
-
-	path, conf, err := config.Init(name, version)
-	if err != nil {
-		return err
-	}
-
-	ui.Info("создан %s", path)
-	if conf.SSHKey != "" {
-		ui.Info("ssh-ключ: %s (и %s)", conf.SSHKey, conf.SSHPubkey)
-	} else {
-		ui.Warn("ssh-ключ в ~/.ssh не найден (id_rsa, id_ed25519, id_ecdsa): впишите SSH_KEY и SSH_PUBKEY")
-	}
-	if version != "" {
-		ui.Info("версия k3s: %s (стабильная на сегодня)", version)
-	}
-	ui.Info("дальше: k3sctl cloud-init %s (или впишите SSH_HOST и k3sctl prepare), install, access", name)
-
-	return nil
 }
 
 func runList() error {

@@ -109,10 +109,16 @@ else
 fi
 
 # --- 3. официальный установщик ---
-# Если k3s уже работает, установщик при той же версии службу не перезапускает,
-# и новый config.yaml не применяется — перезапускаем сами после установки.
+# Если k3s уже работает, а версия и служба не изменились, установщик её не
+# перезапускает, и новый config.yaml не применяется — перезапускаем сами. Если
+# перезапустил он, второй не нужен: он оборвал бы ещё не закончившийся запуск.
 svc=k3s
 [ "$K3S_ROLE" = agent ] && svc=k3s-agent
+svc_state() {
+  k3s --version 2>/dev/null | head -1
+  systemctl show "$svc" -p ExecMainPID --value 2>/dev/null
+}
+old_state=$(svc_state || true)
 was_active=false
 if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$svc" 2>/dev/null; then
   was_active=true
@@ -132,7 +138,7 @@ else
 fi
 rm -f "$installer"
 
-if [ "$was_active" = true ]; then
+if [ "$was_active" = true ] && [ "$(svc_state || true)" = "$old_state" ]; then
   log "k3s уже работал — перезапускаю службу $svc, чтобы применить config.yaml"
   if command -v systemctl >/dev/null 2>&1; then
     systemctl restart "$svc"

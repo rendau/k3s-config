@@ -35,6 +35,8 @@ func CloudInit(c *config.Config, path string) error {
 		Timezone:      c.ServerTimezone,
 		RebootCron:    c.PrepareRebootCron,
 		JournalMaxUse: c.JournalMaxUse,
+
+		DisablePassword: c.PrepareDisablePassword,
 	})
 	if err != nil {
 		return err
@@ -52,6 +54,9 @@ const (
 	rebootWait  = 3 * time.Minute
 	rebootPause = 10 * time.Second // даём серверу уйти в перезагрузку, иначе первая проверка попадёт в ещё живую систему
 	rebootRetry = 5 * time.Second
+
+	passwordRetries = 3
+	passwordPause   = 10 * time.Second
 )
 
 // waitAfterReboot ждёт, пока сервер после перезагрузки снова пустит по ssh.
@@ -83,12 +88,16 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 }
 
 // bootstrap выбирает, как зайти на сервер для подготовки, по порядку:
-//  1. SSH_USER по ключу — сервер уже подготовлен, пароль не нужен;
-//  2. BOOTSTRAP_USER по ключу — ключ положил провайдер или cloud-init;
+//  1. SSH_USER по ключу и sudo без пароля — сервер уже подготовлен;
+//  2. BOOTSTRAP_USER по ключу — ключ положил провайдер, cloud-init или человек;
 //  3. BOOTSTRAP_USER по паролю из BOOTSTRAP_PASSWORD (ask = спросить).
 //
-// Возвращает цель и признак, что вошли по паролю.
+// Если BOOTSTRAP_USER не root и sudo у него спрашивает пароль (сервер настроен
+// руками), тот же BOOTSTRAP_PASSWORD идёт и в sudo: нужен он один раз, prepare
+// настроит sudo без пароля. Возвращает цель и признак, что вошли по паролю.
 func bootstrap(ctx context.Context, c *config.Config) (sshx.Target, bool, error) {
+	const rootCheck = `[ "$(id -u)" = 0 ] || sudo -n true`
+
 	probe := func(t sshx.Target, cmd string) bool {
 		t.Stderr = io.Discard
 		_, err := t.Output(ctx, cmd)
@@ -103,29 +112,72 @@ func bootstrap(ctx context.Context, c *config.Config) (sshx.Target, bool, error)
 			return t, false, nil
 		}
 	}
-	if t := target(c, c.BootstrapUser); probe(t, "true") {
-		return t, false, nil
-	}
-	if c.BootstrapPassword == "" {
-		return sshx.Target{}, false, fmt.Errorf("не смог зайти по ключу ни как %s, ни как %s; "+
-			"если провайдер дал пароль %s, укажите BOOTSTRAP_PASSWORD=ask", c.SSHUser, c.BootstrapUser, c.BootstrapUser)
+
+	t := target(c, c.BootstrapUser)
+	if probe(t, "true") {
+		if probe(t, rootCheck) {
+			return t, false, nil
+		}
+		pw, err := bootstrapPassword(c, fmt.Sprintf("пароль sudo %s@%s: ", c.BootstrapUser, c.SSHHost))
+		if err != nil {
+			return sshx.Target{}, false, err
+		}
+		if pw == "" {
+			return sshx.Target{}, false, fmt.Errorf("у %s sudo спрашивает пароль: укажите BOOTSTRAP_PASSWORD=ask", c.BootstrapUser)
+		}
+		t.SudoPassword = pw
+
+		return t, false, checkSudoPassword(ctx, t)
 	}
 
-	pw := c.BootstrapPassword
-	if pw == "ask" {
-		var err error
-		if pw, err = askPassword(fmt.Sprintf("пароль %s@%s: ", c.BootstrapUser, c.SSHHost)); err != nil {
+	pw, err := bootstrapPassword(c, fmt.Sprintf("пароль %s@%s: ", c.BootstrapUser, c.SSHHost))
+	if err != nil {
+		return sshx.Target{}, false, err
+	}
+	if pw == "" {
+		return sshx.Target{}, false, fmt.Errorf("не смог зайти по ключу ни как %s, ни как %s; "+
+			"если есть пароль %s, укажите BOOTSTRAP_PASSWORD=ask", c.SSHUser, c.BootstrapUser, c.BootstrapUser)
+	}
+	t.Password = pw
+	for i := 0; !probe(t, "true"); i++ {
+		if i == passwordRetries {
+			return sshx.Target{}, false, fmt.Errorf("вход как %s по паролю не удался", c.BootstrapUser)
+		}
+		// sshd новых версий на время закрывает вход с адреса после неудачных
+		// попыток (PerSourcePenalties), а попытки по ключу выше считаются.
+		ui.Info("вход по паролю не прошёл, пробую ещё раз через %s", passwordPause)
+		if err = sleepCtx(ctx, passwordPause); err != nil {
 			return sshx.Target{}, false, err
 		}
 	}
-	t := target(c, c.BootstrapUser)
-	t.Password = pw
-	if !probe(t, "true") {
-		return sshx.Target{}, false, fmt.Errorf("вход как %s по паролю не удался", c.BootstrapUser)
-	}
 	ui.Info("вошёл как %s по паролю; положу ему ключ, дальше пароль не понадобится", c.BootstrapUser)
+	if !probe(t, rootCheck) {
+		t.SudoPassword = pw
+		if err = checkSudoPassword(ctx, t); err != nil {
+			return sshx.Target{}, false, err
+		}
+	}
 
 	return t, true, nil
+}
+
+// bootstrapPassword — значение BOOTSTRAP_PASSWORD: пусто, сам пароль или ответ в терминале.
+func bootstrapPassword(c *config.Config, prompt string) (string, error) {
+	if c.BootstrapPassword == "ask" {
+		return askPassword(prompt)
+	}
+
+	return c.BootstrapPassword, nil
+}
+
+// checkSudoPassword проверяет, что sudo принимает пароль, до запуска настоящего скрипта.
+func checkSudoPassword(ctx context.Context, t sshx.Target) error {
+	t.Stderr = io.Discard
+	if _, err := t.RunScript(ctx, "true\n", true); err != nil {
+		return fmt.Errorf("sudo на %s не принял пароль", t)
+	}
+
+	return nil
 }
 
 // askPassword спрашивает пароль в терминале скрытым вводом.

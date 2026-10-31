@@ -16,8 +16,12 @@ users:
 {{- range .SSHPubkeys }}
       - {{ . }}
 {{- end }}
+{{- if .DisablePassword }}
 ssh_pwauth: false
 disable_root: true
+{{- else }}
+ssh_pwauth: true
+{{- end }}
 package_update: true
 package_upgrade: true
 packages: [sudo, curl, ca-certificates, bash-completion, cron]
@@ -28,6 +32,12 @@ write_files:
     content: |
       fs.inotify.max_user_instances = 512
       fs.inotify.max_user_watches = 524288
+  # needrestart не должен перезапускать k3s после обновления пакетов: у него
+  # статический бинарник, а каждый перезапуск — это пропавший на время API.
+  - path: /etc/needrestart/conf.d/k3s.conf
+    content: |
+      $nrconf{override_rc}{qr(^k3s(-agent)?\.service$)} = 0;
+{{- if .DisablePassword }}
   # Имя 00-* читается раньше провайдерского 50-cloud-init.conf, а у sshd
   # побеждает первое значение, поэтому запрет паролей не слетает.
   - path: /etc/ssh/sshd_config.d/00-no-password.conf
@@ -35,6 +45,7 @@ write_files:
       PasswordAuthentication no
       ChallengeResponseAuthentication no
       PermitRootLogin prohibit-password
+{{- end }}
 {{- if .RebootCron }}
   # Перезагрузка после обновлений по расписанию, только если система её
   # просит (/var/run/reboot-required); unattended-upgrades сам не перезагружает.

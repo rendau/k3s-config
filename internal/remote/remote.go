@@ -21,6 +21,8 @@ const (
 	ScriptPrepareServer = "prepare_server.sh"
 	ScriptInstallK3s    = "install_k3s.sh"
 	ScriptSetupSA       = "setup_sa.sh"
+	ScriptInspectServer = "inspect_server.sh"
+	ScriptUpgradeK3s    = "upgrade_k3s.sh"
 )
 
 // Script собирает серверный скрипт: сначала строки NAME='value' с настройками
@@ -55,6 +57,8 @@ type CloudInitParams struct {
 	Timezone      string
 	RebootCron    string // расписание cron перезагрузки после обновлений; пусто = не заводить
 	JournalMaxUse string // потолок journald (SystemMaxUse); пусто = не трогать
+
+	DisablePassword bool // запретить вход по паролю
 }
 
 // CloudInit печатает user-data для cloud-init по шаблону templates/cloud-init.yaml.tpl.
